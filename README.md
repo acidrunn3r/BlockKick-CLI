@@ -1,2 +1,6 @@
 # BlockKick-CLI
-Python wallet client for blockchain BlockKick
+**Локальный кошелёк для взаимодействия с платформой BlockKick**
+
+Связанные репозитории:
+- [BlockKick](https://github.com/andre1vorobei/BlockKick)
+- [BlockKick-API](https://github.com/acidrunn3r/BlockKick-API)
