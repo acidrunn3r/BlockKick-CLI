@@ -1,4 +1,4 @@
-"""Модуль для работы с ключами."""
+"""Module for generating key pairs for the wallet."""
 
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
