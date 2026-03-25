@@ -51,10 +51,10 @@ def wallet_create(
                 password = pwd
                 break
         
-        keystore_path = create_keystore(password=password)
+        keystore_path, public_key = create_keystore(password=password)
         
         console.print(f"\n[green]Кошелёк успешно создан и зашифрован![/green]")
-        # console.print(f"Адрес / Public key: {wallet['public_key_hex']}")
+        console.print(f"Публичный ключ: {public_key}")
         console.print(f"Файл сохранён: [bold]{keystore_path}[/bold]")
         console.print(f"[red]Никому не передавайте этот файл и пароль![/red]")
 

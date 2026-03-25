@@ -7,7 +7,6 @@ from cryptography.hazmat.backends import default_backend
 import os
 import json
 import binascii
-import getpass
 from pathlib import Path
 from .keys import generate_ed25519_wallet
 
@@ -38,30 +37,15 @@ def derive_key(password: str, salt: bytes) -> bytes:
     return kdf.derive(password.encode("utf-8"))
 
 
-def create_keystore(password: str | None = None) -> Path:
+def create_keystore(password: str) -> tuple[Path, str]:
     """Creates a new wallet, encrypts the private key, and saves it as a keystore file.
     
     Args:
-        password (str | None): Optional password. If None, the user will be prompted to
-            enter a password interactively.
+        password (str): The password to use for encrypting the private key.
 
     Returns:
         Path: The path to the created keystore file.
     """
-    if password is None:
-        console.print("[bold]Создание нового кошелька[/bold]")
-
-        while True:
-            pwd = getpass.getpass("Введите пароль для кошелька (минимум 8 символов): ")
-            if len(pwd) < 8:
-                console.print("[red]Пароль слишком короткий![/red]")
-                continue
-            pwd2 = getpass.getpass("Повторите пароль: ")
-            if pwd == pwd2:
-                password = pwd
-                break
-            console.print("[red]Пароли не совпадают. Попробуйте ещё раз.[/red]")
-
     wallet = generate_ed25519_wallet()
 
     # Encrypting private key
@@ -98,9 +82,4 @@ def create_keystore(password: str | None = None) -> Path:
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(keystore_data, f, indent=2, ensure_ascii=False)
 
-    console.print(f"\n[green]Кошелёк успешно создан и зашифрован![/green]")
-    console.print(f"Адрес / Public key: {wallet['public_key_hex']}")
-    console.print(f"Файл сохранён: {filepath}")
-    console.print(f"[red]Никому не передавайте этот файл и пароль![/red]")
-
-    return filepath
+    return filepath, wallet['public_key_hex']
