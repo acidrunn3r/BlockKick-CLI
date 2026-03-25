@@ -7,14 +7,14 @@ import time
 
 
 def generate_ed25519_wallet() -> dict:
-    """Генерирует пару Ed25519 ключей.
-    
+    """Generates an Ed25519 key pair.
+
     Returns:
-        dict: Словарь с ключами:
-            - private_key_hex (str): приватный ключ в hex
-            - public_key_hex (str): публичный ключ в hex
-            - timestamp (int): timestamp создания ключа
-            - version (str): версия формата
+        dict: A dictionary with the following keys:
+            - private_key_hex (str): The private key in hexadecimal format.
+            - public_key_hex (str): The public key in hexadecimal format.
+            - timestamp (int): The timestamp of when the key was created.
+            - version (str): The version of the key format.
     """
     private_key = ed25519.Ed25519PrivateKey.generate()
     
