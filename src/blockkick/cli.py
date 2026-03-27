@@ -14,7 +14,7 @@ _unlocked_wallet: dict[str, bytes] | None = None
 
 app = typer.Typer(
     name="blockkick",
-    help="BlockKick CLI — local wallet for BlockKick blockhain",
+    help="BlockKick CLI — local wallet for BlockKick blockchain",
     rich_markup_mode="rich",
     no_args_is_help=True,
     context_settings={
@@ -86,7 +86,7 @@ def wallet_create(
         console.print(f"\n[green]Wallet successfully created and encrypted![/green]")
         console.print(f"Public key: {public_key}")
         console.print(f"File path: [bold]{keystore_path}[/bold]")
-        console.print(f"Remeber your password! It will be used to acces your wallet.")
+        console.print(f"Remember your password! It will be used to access your wallet.")
         console.print(f"[red]Do not give this file or password to anyone![/red]")
 
     except Exception as e:
@@ -104,7 +104,7 @@ def wallet_list():
     
     if not keystores:
         console.print(
-            "No wallets found." 
+            "No wallets found. " 
             "Create your first wallet: [yellow]blockkick wallet create[/yellow]"
         )
         return
@@ -213,13 +213,13 @@ def wallet_unlock(
         console.print(f"\n[green]Wallet unlocked![/green]")
         console.print(f"Public key: [bold]{public_key}[/bold]")
         console.print(f"File: [bold]{filename}[/bold]")
-        console.print(f"[dim]Private key is active untill the end of this session[/dim]")
+        console.print(f"[dim]Private key is active until the end of this session[/dim]")
         
     except ValueError as e:
-        console.print(f"[red]Decrpytion error:[/red]{e}")
+        console.print(f"[red]Decrpyption error:[/red]{e}")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]Unknown error:[/red]{e}")
+        console.print(f"[red]Unknown error: [/red]{e}")
         raise typer.Exit(1)
 
 @wallet_app.command("lock")
