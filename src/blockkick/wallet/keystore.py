@@ -113,6 +113,6 @@ def decrypt_keystore(keystore: Path, password: str) -> bytes:
     try:
         private_key_bytes = aesgcm.decrypt(nonce, ciphertext, None)
     except Exception as e:
-        raise ValueError("Неверный пароль или повреждённый keystore") from e
+        raise ValueError("Invalid password") from e
     
     return private_key_bytes
