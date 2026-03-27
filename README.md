@@ -29,6 +29,12 @@ source .venv/bin/activate  # macOS/Linux
 ```bash
 pip install -e .
 ```
+#### Для использование клиента вне виртуального окружения
+```bash
+python -m pip install --user pipx
+pipx ensurepath
+pipx install git+https://github.com/acidrunn3r/BlockKick-CLI.git
+```
 ### Шаг 4: Настройте автодополнение (опционально)
 ```bash
 blockkick --install-completion
