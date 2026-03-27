@@ -7,7 +7,7 @@ from getpass import getpass
 from rich.console import Console
 from rich.table import Table
 
-from .wallet.keystore import create_keystore, KEYSTORE_DIR
+from .wallet.keystore import create_keystore, KEYSTORE_DIR, decrypt_keystore
 
 app = typer.Typer(
     name="blockkick",
@@ -16,6 +16,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+_unlocked_wallet: dict[str, bytes] | None = None
 
 
 # ==== WALLET COMMANDS ====
@@ -28,7 +29,7 @@ def wallet_create(
         None, "--password", "-p",
         hide_input=True,
         confirmation_prompt=True,
-        help="Пароль для шифрования keystore (запрашивается интерактивно, если не указан)"
+        help="Пароль для шифрования keystore"
     )
 ):
     """
@@ -72,7 +73,10 @@ def wallet_list():
     keystores = list(KEYSTORE_DIR.glob("keystore-*.json"))
     
     if not keystores:
-        console.print("[yellow]Кошельки не найдены. Создайте свой первый кошелёк: blockkick wallet create[/yellow]")
+        console.print(
+            "[yellow]Кошельки не найдены." 
+            "Создайте свой первый кошелёк: blockkick wallet create[/yellow]"
+        )
         return
     
     table = Table(title=f"Найдено кошельков: {len(keystores)}", show_lines=True)
@@ -97,7 +101,10 @@ def wallet_list():
 
 @wallet_app.command("info")
 def wallet_info(
-    filename: str = typer.Argument(..., help="Имя файла keystore (например, keystore-abc123.json)")
+    filename: str = typer.Argument(
+        ...,
+        help="Имя файла keystore (например, keystore-abc123.json)"
+    )
 ):
     """
     Show details of a specific keystore file.
@@ -114,11 +121,19 @@ def wallet_info(
         data = json.loads(filepath.read_text(encoding="utf-8"))
         
         console.print(f"[bold]Информация о кошельке: {filename}[/bold]")
-        console.print(f"🔑 Public Key: [bold]{data['public_key_hex']}[/bold]")
-        console.print(f"🕐 Created: {data['timestamp']} ({__import__('datetime').datetime.fromtimestamp(data['timestamp'])})")
-        console.print(f"🔐 Cipher: {data['crypto']['cipher'].upper()}")
-        console.print(f"🧮 KDF: {data['crypto']['kdf']} (n={data['crypto']['kdfparams']['n']}, r={data['crypto']['kdfparams']['r']}, p={data['crypto']['kdfparams']['p']})")
-        console.print(f"📄 Version: {data['version']}")
+        console.print(f"Публичный ключ [bold]{data['public_key_hex']}[/bold]")
+        console.print(
+            f"Created: {data['timestamp']} "
+            f"({__import__('datetime').datetime.fromtimestamp(data['timestamp'])})"
+        )
+        console.print(f"Cipher: {data['crypto']['cipher'].upper()}")
+        console.print(
+            f"KDF: {data['crypto']['kdf']} "
+            f"(n={data['crypto']['kdfparams']['n']}, "
+            f"r={data['crypto']['kdfparams']['r']}, "
+            f"p={data['crypto']['kdfparams']['p']})"
+        )
+        console.print(f"Version: {data['version']}")
         
     except json.JSONDecodeError:
         console.print(f"[red]Ошибка чтения JSON в файле[/red]")
@@ -127,6 +142,87 @@ def wallet_info(
         console.print(f"[red]Ошибка: {e}[/red]")
         raise typer.Exit(1)
 
+@wallet_app.command("unlock")
+def wallet_unlock(
+    filename: str = typer.Argument(..., help="Имя файла keystore"),
+    password: str = typer.Option(
+        None, "--password", "-p",
+        hide_input=True,
+        help="Пароль для расшифровки"
+    ),
+):
+    """
+    Unlock a wallet, locking currently unlocked wallet.
+    
+    The decrypted key is stored temporarily in memory for signing transactions.
+    """
+    global _unlocked_wallet
+    
+    filepath = KEYSTORE_DIR / filename
+    
+    if not filepath.exists():
+        console.print(f"[red]Файл не найден: {filepath}[/red]")
+        raise typer.Exit(1)
+    
+    try:
+        if _unlocked_wallet:
+            old_filename = list(_unlocked_wallet.keys())[0]
+            console.print(f"[dim]Предыдущий кошелёк заблокирован: {old_filename}[/dim]")
+            _unlocked_wallet = None
+        
+        if password is None:
+            password = getpass("Введите пароль для расшифровки кошелька: ")
+        
+        private_key_bytes = decrypt_keystore(filepath, password)
+        
+        _unlocked_wallet = {filename: private_key_bytes}
+        
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+        
+        console.print(f"\n[green]Кошелёк разблокирован![/green]")
+        console.print(f"Публичный ключ: [bold]{public_key}[/bold]")
+        console.print(f"Файл: [bold]{filename}[/bold]")
+        console.print(f"[dim]Ключ хранится в памяти до завершения сессии[/dim]")
+        
+    except ValueError as e:
+        console.print(f"Ошибка расшифровки: [red]{e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"Неизвестная ошибка: [red]{e}[/red]")
+        raise typer.Exit(1)
+
+@wallet_app.command("lock")
+def wallet_lock():
+    """
+    Lock the currently unlocked wallet.
+    """
+    global _unlocked_wallet
+    
+    if _unlocked_wallet:
+        filename = list(_unlocked_wallet.keys())[0]
+        _unlocked_wallet = None
+        console.print(f"[green]Кошелёк заблокирован: {filename}[/green]")
+    else:
+        console.print("Нет разблокированных кошельков")
+
+@wallet_app.command("status")
+def wallet_status():
+    """
+    Show status of the currently unlocked wallet.
+    """
+    if not _unlocked_wallet:
+        console.print("Ни один кошелёк не разблокирован")
+        console.print("[dim]Используйте: blockkick wallet unlock <keystore файл>[/dim]")
+        return
+    
+    filename = list(_unlocked_wallet.keys())[0]
+    data = json.loads((KEYSTORE_DIR / filename).read_text(encoding="utf-8"))
+    public_key = data["public_key_hex"]
+    
+    console.print(f"[green]Активный кошелёк:[/green]")
+    console.print(f"Файл: [bold]{filename}[/bold]")
+    console.print(f"Public Key: [bold]{public_key}[/bold]")
 
 # ==== GENERAL COMMANDS ====
 @app.command("version")
