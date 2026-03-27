@@ -9,15 +9,44 @@ from rich.table import Table
 
 from .wallet.keystore import create_keystore, KEYSTORE_DIR, decrypt_keystore
 
+console = Console()
+_unlocked_wallet: dict[str, bytes] | None = None
+
 app = typer.Typer(
     name="blockkick",
     help="BlockKick CLI — local wallet for BlockKick blockhain",
     rich_markup_mode="rich",
     no_args_is_help=True,
+    context_settings={
+        "help_option_names": ["-h", "--help"]
+    },
 )
-console = Console()
-_unlocked_wallet: dict[str, bytes] | None = None
 
+# ==== GENERAL COMMANDS ====
+def _version_callback(value: bool):
+    """Callback for --version flag."""
+    if value:
+        from importlib.metadata import version
+        try:
+            pkg_version = version("blockkick")
+        except Exception:
+            pkg_version = "0.1.0 (dev)"
+        typer.echo(f"BlockKick CLI v{pkg_version}")
+        raise typer.Exit()
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version", "-v",
+        help="Show version and exit",
+        is_eager=True,
+        callback=_version_callback,
+    ),
+):
+    """BlockKick CLI — local wallet for BlockKick blockchain."""
+    pass
 
 # ==== WALLET COMMANDS ====
 wallet_app = typer.Typer(help="Wallet management commands (create, list, info)")
@@ -224,14 +253,6 @@ def wallet_status():
     console.print(f"[green]Currently unlocked wallet:[/green]")
     console.print(f"File: [bold]{filename}[/bold]")
     console.print(f"Public Key: [bold]{public_key}[/bold]")
-
-# ==== GENERAL COMMANDS ====
-@app.command("version")
-def show_version():
-    """Show BlockKick CLI version."""
-    from importlib.metadata import version
-    pkg_version = version("blockkick")
-    console.print(f"[bold]BlockKick CLI[/bold] v{pkg_version}")
 
 
 if __name__ == "__main__":
