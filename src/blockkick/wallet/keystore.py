@@ -15,6 +15,140 @@ console = Console()
 KEYSTORE_DIR = Path.home() / ".blockkick" / "keystores"
 KEYSTORE_DIR.mkdir(parents=True, exist_ok=True)
 
+CONFIG_FILE = Path.home() / ".blockkick" / "config.json"
+SESSION_FILE = Path.home() / ".blockkick" / "session.json"
+METADATA_FILE = Path.home() / ".blockkick" / "metadata.json"
+
+
+def get_selected_wallet() -> str | None:
+    """Return the filename of the currently selected wallet, or None."""
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return data.get("selected_wallet")
+    except Exception:
+        return None
+
+
+def set_selected_wallet(filename: str) -> None:
+    """Persist the selected wallet filename to config.
+
+    Args:
+        filename: Keystore filename (e.g. keystore-abc123.json).
+    """
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["selected_wallet"] = filename
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def save_session(filename: str, private_key_bytes: bytes) -> None:
+    """Save decrypted private key to session file (chmod 600).
+
+    Args:
+        filename: Keystore filename that was selected.
+        private_key_bytes: Decrypted private key bytes.
+    """
+    session_data = {
+        "wallet": filename,
+        "private_key_hex": binascii.hexlify(private_key_bytes).decode(),
+    }
+    SESSION_FILE.write_text(json.dumps(session_data, indent=2), encoding="utf-8")
+    SESSION_FILE.chmod(0o600)
+
+
+def get_session_private_key() -> tuple[str, bytes] | tuple[None, None]:
+    """Return (filename, private_key_bytes) from session, or (None, None) if none.
+
+    Returns:
+        tuple: (wallet filename, private key bytes) or (None, None).
+    """
+    if not SESSION_FILE.exists():
+        return None, None
+    try:
+        data = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        filename = data["wallet"]
+        private_key_bytes = binascii.unhexlify(data["private_key_hex"])
+        return filename, private_key_bytes
+    except Exception:
+        return None, None
+
+
+def clear_session() -> None:
+    """Remove the session file."""
+    if SESSION_FILE.exists():
+        SESSION_FILE.unlink()
+
+
+DEFAULT_NODE_URL = "http://localhost:8080"
+
+
+def get_node_url() -> str:
+    """Return the configured node URL, falling back to the default."""
+    if not CONFIG_FILE.exists():
+        return DEFAULT_NODE_URL
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return data.get("node_url", DEFAULT_NODE_URL)
+    except Exception:
+        return DEFAULT_NODE_URL
+
+
+def set_node_url(url: str) -> None:
+    """Persist the node URL to config.
+
+    Args:
+        url: Base URL of the BlockKick node (e.g. http://localhost:8080).
+    """
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["node_url"] = url
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def get_last_action(filename: str) -> int | None:
+    """Return the last action timestamp for a wallet, or None if not recorded.
+
+    Args:
+        filename: Keystore filename.
+
+    Returns:
+        int: Unix timestamp of last action, or None.
+    """
+    if not METADATA_FILE.exists():
+        return None
+    try:
+        data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+        return data.get(filename, {}).get("last_action")
+    except Exception:
+        return None
+
+
+def update_last_action(filename: str) -> None:
+    """Record the current time as the last action for a wallet.
+
+    Args:
+        filename: Keystore filename.
+    """
+    import time
+    data: dict = {}
+    if METADATA_FILE.exists():
+        try:
+            data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data.setdefault(filename, {})["last_action"] = int(time.time())
+    METADATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
 
 def derive_key(password: str, salt: bytes) -> bytes:
     """Derive strong key from password using scrypt (memory-hard KDF).

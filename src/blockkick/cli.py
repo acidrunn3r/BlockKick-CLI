@@ -7,10 +7,23 @@ from getpass import getpass
 from rich.console import Console
 from rich.table import Table
 
-from .wallet.keystore import create_keystore, KEYSTORE_DIR, decrypt_keystore
+from .wallet.keystore import (
+    create_keystore,
+    KEYSTORE_DIR,
+    decrypt_keystore,
+    get_selected_wallet,
+    set_selected_wallet,
+    save_session,
+    clear_session,
+    get_last_action,
+    update_last_action,
+    get_node_url,
+    set_node_url,
+)
+from .blockchain.mining import fetch_candidate, mine, submit_block
+import httpx
 
 console = Console()
-_unlocked_wallet: dict[str, bytes] | None = None
 
 app = typer.Typer(
     name="blockkick",
@@ -48,6 +61,34 @@ def main(
     """BlockKick CLI — local wallet for BlockKick blockchain."""
     pass
 
+# ==== CONFIG COMMANDS ====
+config_app = typer.Typer(help="Configuration commands (node URL, etc.)")
+app.add_typer(config_app, name="config")
+
+@config_app.command("set-node")
+def config_set_node(
+    url: str = typer.Argument(..., help="Node URL (e.g. http://localhost:3000)")
+):
+    """
+    Set the default node URL for all commands (mine, balance, etc.).
+
+    Persisted to ~/.blockkick/config.json.
+    """
+    set_node_url(url)
+    console.print(f"[green]Node URL set to:[/green] [bold]{url}[/bold]")
+
+@config_app.command("show")
+def config_show():
+    """
+    Show current configuration.
+    """
+    node_url = get_node_url()
+    selected = get_selected_wallet()
+
+    console.print(f"Node URL: [bold]{node_url}[/bold]")
+    console.print(f"Selected wallet: [bold]{selected or '—'}[/bold]")
+
+
 # ==== WALLET COMMANDS ====
 wallet_app = typer.Typer(help="Wallet management commands (create, list, info)")
 app.add_typer(wallet_app, name="wallet")
@@ -82,7 +123,8 @@ def wallet_create(
                 break
         
         keystore_path, public_key = create_keystore(password=password)
-        
+        update_last_action(keystore_path.name)
+
         console.print(f"\n[green]Wallet successfully created and encrypted![/green]")
         console.print(f"Public key: {public_key}")
         console.print(f"File path: [bold]{keystore_path}[/bold]")
@@ -109,22 +151,38 @@ def wallet_list():
         )
         return
     
+    selected = get_selected_wallet()
+
+    def sort_key(path):
+        last = get_last_action(path.name)
+        if last is not None:
+            return last
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["timestamp"]
+        except Exception:
+            return 0
+
+    sorted_keystores = sorted(keystores, key=sort_key, reverse=True)
+
     table = Table(title=f"Wallets found: {len(keystores)}", show_lines=True)
     table.add_column("№", style="dim", width=4)
     table.add_column("Public Key", style="cyan", no_wrap=True)
-    table.add_column("Created", style="magenta")
+    table.add_column("Last Action", style="magenta")
     table.add_column("File", style="green")
-    
-    for idx, path in enumerate(sorted(keystores), 1):
+    table.add_column("", width=2)
+
+    for idx, path in enumerate(sorted_keystores, 1):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             pub_short = f"{data['public_key_hex'][:16]}..."
-            ts = datetime.datetime.fromtimestamp(data["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            last = get_last_action(path.name) or data["timestamp"]
+            ts = datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M")
         except Exception:
             pub_short = "???"
             ts = "unknown"
-        
-        table.add_row(str(idx), pub_short, ts, path.name)
+
+        active = "*" if path.name == selected else ""
+        table.add_row(str(idx), pub_short, ts, path.name, active)
     
     console.print(table)
     console.print(f"[dim]Storage path: {KEYSTORE_DIR}[/dim]")
@@ -172,9 +230,9 @@ def wallet_info(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-@wallet_app.command("unlock")
-def wallet_unlock(
-    filename: str = typer.Argument(..., help="Keystore file name"),
+@wallet_app.command("select")
+def wallet_select(
+    filename: str = typer.Argument(..., help="Keystore file name (e.g. keystore-abc123.json)"),
     password: str = typer.Option(
         None, "--password", "-p",
         hide_input=True,
@@ -182,77 +240,183 @@ def wallet_unlock(
     ),
 ):
     """
-    Unlock a wallet, locking currently unlocked wallet.
-    
-    The decrypted key is stored temporarily in memory for signing transactions.
+    Select a wallet as the active one for future commands (mine, login, etc.).
+
+    Decrypts the keystore to verify the password, then persists the wallet
+    selection and the decrypted key to ~/.blockkick/ for future use.
     """
-    global _unlocked_wallet
-    
     filepath = KEYSTORE_DIR / filename
-    
+
     if not filepath.exists():
         console.print(f"[red]File not found:[/red] {filepath}")
         raise typer.Exit(1)
-    
+
     try:
-        if _unlocked_wallet:
-            old_filename = list(_unlocked_wallet.keys())[0]
-            console.print(f"[dim]Disabling current wallet: {old_filename}[/dim]")
-            _unlocked_wallet = None
-        
         if password is None:
             password = getpass("Enter wallet password: ")
-        
+
         private_key_bytes = decrypt_keystore(filepath, password)
-        
-        _unlocked_wallet = {filename: private_key_bytes}
-        
+
         data = json.loads(filepath.read_text(encoding="utf-8"))
         public_key = data["public_key_hex"]
-        
-        console.print(f"\n[green]Wallet unlocked![/green]")
-        console.print(f"Public key: [bold]{public_key}[/bold]")
-        console.print(f"File: [bold]{filename}[/bold]")
-        console.print(f"[dim]Private key is active until the end of this session[/dim]")
-        
     except ValueError as e:
-        console.print(f"[red]Decrpyption error:[/red]{e}")
+        console.print(f"[red]Decryption error:[/red] {e}")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]Unknown error: [/red]{e}")
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-@wallet_app.command("lock")
-def wallet_lock():
-    """
-    Lock the currently unlocked wallet.
-    """
-    global _unlocked_wallet
-    
-    if _unlocked_wallet:
-        filename = list(_unlocked_wallet.keys())[0]
-        _unlocked_wallet = None
-        console.print(f"[green]Wallet locked: {filename}[/green]")
-    else:
-        console.print("There is no unlocked wallet.")
+    set_selected_wallet(filename)
+    save_session(filename, private_key_bytes)
+    update_last_action(filename)
 
-@wallet_app.command("status")
-def wallet_status():
+    console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
+    console.print(f"Public key: [bold]{public_key}[/bold]")
+    console.print(f"[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]")
+
+
+@wallet_app.command("deselect")
+def wallet_deselect():
     """
-    Show status of the currently unlocked wallet.
+    Deselect the active wallet and clear the session.
     """
-    if not _unlocked_wallet:
-        console.print("There is no unlocked wallet.")
-        console.print("[dim]Use: blockkick wallet unlock <Keystore file name>[/dim]")
+    selected = get_selected_wallet()
+
+    if not selected:
+        console.print("No wallet is currently selected.")
         return
-    
-    filename = list(_unlocked_wallet.keys())[0]
-    data = json.loads((KEYSTORE_DIR / filename).read_text(encoding="utf-8"))
-    public_key = data["public_key_hex"]
-    
-    console.print(f"[green]Currently unlocked wallet:[/green]")
-    console.print(f"File: [bold]{filename}[/bold]")
-    console.print(f"Public Key: [bold]{public_key}[/bold]")
+
+    clear_session()
+    set_selected_wallet("")
+
+    console.print(f"[green]Wallet deselected:[/green] {selected}")
+
+
+# ==== BALANCE COMMAND ====
+
+@app.command("balance")
+def balance_cmd(
+    node: str = typer.Option(
+        None, "--node", "-n",
+        help="Node URL. Defaults to saved config."
+    ),
+):
+    """
+    Show the coin balance of the currently selected wallet.
+    """
+    selected = get_selected_wallet()
+
+    if not selected:
+        console.print("[red]No wallet selected.[/red]")
+        console.print("[dim]Run: blockkick wallet select <filename>[/dim]")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads((KEYSTORE_DIR / selected).read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+    except Exception as e:
+        console.print(f"[red]Error reading wallet:[/red] {e}")
+        raise typer.Exit(1)
+
+    node_url = node or get_node_url()
+
+    try:
+        response = httpx.get(
+            f"{node_url.rstrip('/')}/api/v1/balance/{public_key}",
+            timeout=10,
+        )
+        response.raise_for_status()
+        balance = response.json()["balance"]
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"Wallet:  [bold]{selected}[/bold]")
+    console.print(f"Balance: [bold green]{balance} coins[/bold green]")
+
+
+# ==== MINE COMMAND ====
+
+@app.command("mine")
+def mine_cmd(
+    node: str = typer.Option(
+        None, "--node", "-n",
+        help="Node URL (e.g. http://localhost:8080). Defaults to saved config."
+    ),
+):
+    """
+    Mine a block on the BlockKick blockchain.
+
+    Uses the currently selected wallet as the reward recipient.
+    Runs proof-of-work locally and submits the block to the node.
+    """
+    from .wallet.keystore import get_session_private_key, KEYSTORE_DIR
+    import json as _json
+
+    # Resolve wallet
+    session_filename, _ = get_session_private_key()
+    selected = get_selected_wallet()
+    wallet_file = session_filename or selected
+
+    if not wallet_file:
+        console.print("[red]No wallet selected.[/red]")
+        console.print("[dim]Run: blockkick wallet select <filename>[/dim]")
+        raise typer.Exit(1)
+
+    try:
+        data = _json.loads((KEYSTORE_DIR / wallet_file).read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+    except Exception as e:
+        console.print(f"[red]Error reading wallet:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Resolve node URL
+    node_url = node or get_node_url()
+
+    console.print(f"[bold]Mining with wallet:[/bold] {wallet_file}")
+    console.print(f"[bold]Node:[/bold] {node_url}")
+    console.print(f"[bold]Public key:[/bold] {public_key[:16]}...")
+
+    # Fetch candidate
+    try:
+        console.print("\n[dim]Fetching block candidate...[/dim]")
+        candidate = fetch_candidate(node_url, public_key)
+    except Exception as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1)
+
+    difficulty = candidate["difficulty"]
+    reward = candidate["reward"]
+    block_index = candidate["block_template"]["index"]
+
+    console.print(f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins")
+    console.print(f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n")
+
+    # Run PoW
+    try:
+        with console.status("[yellow]Hashing...[/yellow]", spinner="dots"):
+            nonce, block_hash, elapsed = mine(candidate)
+    except KeyboardInterrupt:
+        console.print("\n[red]Mining cancelled.[/red]")
+        raise typer.Exit(0)
+
+    console.print(f"[green]Block found![/green]")
+    console.print(f"Nonce:   [bold]{nonce}[/bold]")
+    console.print(f"Hash:    [bold]{block_hash}[/bold]")
+    console.print(f"Time:    [bold]{elapsed:.2f}s[/bold]")
+
+    # Submit
+    try:
+        console.print("\n[dim]Submitting block...[/dim]")
+        result = submit_block(node_url, candidate, nonce)
+    except Exception as e:
+        console.print(f"[red]Submission failed:[/red] {e}")
+        raise typer.Exit(1)
+
+    update_last_action(wallet_file)
+
+    console.print(f"\n[green bold]Block accepted![/green bold]")
+    console.print(f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}...")
 
 
 if __name__ == "__main__":
