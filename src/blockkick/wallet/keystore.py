@@ -18,6 +18,7 @@ KEYSTORE_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = Path.home() / ".blockkick" / "config.json"
 SESSION_FILE = Path.home() / ".blockkick" / "session.json"
 METADATA_FILE = Path.home() / ".blockkick" / "metadata.json"
+API_AUTH_FILE = Path.home() / ".blockkick" / "api_auth.json"
 
 
 def get_selected_wallet() -> str | None:
@@ -86,6 +87,7 @@ def clear_session() -> None:
 
 
 DEFAULT_NODE_URL = "http://localhost:8080"
+DEFAULT_API_URL = "http://localhost:8000"
 
 
 def get_node_url() -> str:
@@ -113,6 +115,65 @@ def set_node_url(url: str) -> None:
             data = {}
     data["node_url"] = url
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def get_api_url() -> str:
+    """Return the configured API URL, falling back to the default."""
+    if not CONFIG_FILE.exists():
+        return DEFAULT_API_URL
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return data.get("api_url", DEFAULT_API_URL)
+    except Exception:
+        return DEFAULT_API_URL
+
+
+def set_api_url(url: str) -> None:
+    """Persist the API URL to config.
+
+    Args:
+        url: Base URL of the BlockKick API (e.g. http://localhost:8000).
+    """
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["api_url"] = url
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def save_api_tokens(access_token: str, refresh_token: str) -> None:
+    """Persist API JWT tokens to api_auth.json (chmod 600).
+
+    Args:
+        access_token: JWT access token.
+        refresh_token: JWT refresh token.
+    """
+    auth_data = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
+    API_AUTH_FILE.write_text(json.dumps(auth_data, indent=2), encoding="utf-8")
+    API_AUTH_FILE.chmod(0o600)
+
+
+def get_api_access_token() -> str | None:
+    """Return the stored API access token, or None if not available."""
+    if not API_AUTH_FILE.exists():
+        return None
+    try:
+        data = json.loads(API_AUTH_FILE.read_text(encoding="utf-8"))
+        return data.get("access_token")
+    except Exception:
+        return None
+
+
+def clear_api_tokens() -> None:
+    """Remove the stored API tokens."""
+    if API_AUTH_FILE.exists():
+        API_AUTH_FILE.unlink()
 
 
 def get_last_action(filename: str) -> int | None:
