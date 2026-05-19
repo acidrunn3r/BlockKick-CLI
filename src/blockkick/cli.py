@@ -15,6 +15,8 @@ from .wallet.keystore import (
     set_selected_wallet,
     save_session,
     clear_session,
+    get_last_action,
+    update_last_action,
 )
 
 console = Console()
@@ -89,7 +91,8 @@ def wallet_create(
                 break
         
         keystore_path, public_key = create_keystore(password=password)
-        
+        update_last_action(keystore_path.name)
+
         console.print(f"\n[green]Wallet successfully created and encrypted![/green]")
         console.print(f"Public key: {public_key}")
         console.print(f"File path: [bold]{keystore_path}[/bold]")
@@ -118,18 +121,30 @@ def wallet_list():
     
     selected = get_selected_wallet()
 
+    def sort_key(path):
+        last = get_last_action(path.name)
+        if last is not None:
+            return last
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["timestamp"]
+        except Exception:
+            return 0
+
+    sorted_keystores = sorted(keystores, key=sort_key, reverse=True)
+
     table = Table(title=f"Wallets found: {len(keystores)}", show_lines=True)
     table.add_column("№", style="dim", width=4)
     table.add_column("Public Key", style="cyan", no_wrap=True)
-    table.add_column("Created", style="magenta")
+    table.add_column("Last Action", style="magenta")
     table.add_column("File", style="green")
     table.add_column("", width=2)
 
-    for idx, path in enumerate(sorted(keystores), 1):
+    for idx, path in enumerate(sorted_keystores, 1):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             pub_short = f"{data['public_key_hex'][:16]}..."
-            ts = datetime.datetime.fromtimestamp(data["timestamp"]).strftime("%Y-%m-%d %H:%M")
+            last = get_last_action(path.name) or data["timestamp"]
+            ts = datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M")
         except Exception:
             pub_short = "???"
             ts = "unknown"
@@ -221,6 +236,7 @@ def wallet_select(
 
     set_selected_wallet(filename)
     save_session(filename, private_key_bytes)
+    update_last_action(filename)
 
     console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
     console.print(f"Public key: [bold]{public_key}[/bold]")

@@ -17,6 +17,7 @@ KEYSTORE_DIR.mkdir(parents=True, exist_ok=True)
 
 CONFIG_FILE = Path.home() / ".blockkick" / "config.json"
 SESSION_FILE = Path.home() / ".blockkick" / "session.json"
+METADATA_FILE = Path.home() / ".blockkick" / "metadata.json"
 
 
 def get_selected_wallet() -> str | None:
@@ -82,6 +83,41 @@ def clear_session() -> None:
     """Remove the session file."""
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
+
+
+def get_last_action(filename: str) -> int | None:
+    """Return the last action timestamp for a wallet, or None if not recorded.
+
+    Args:
+        filename: Keystore filename.
+
+    Returns:
+        int: Unix timestamp of last action, or None.
+    """
+    if not METADATA_FILE.exists():
+        return None
+    try:
+        data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+        return data.get(filename, {}).get("last_action")
+    except Exception:
+        return None
+
+
+def update_last_action(filename: str) -> None:
+    """Record the current time as the last action for a wallet.
+
+    Args:
+        filename: Keystore filename.
+    """
+    import time
+    data: dict = {}
+    if METADATA_FILE.exists():
+        try:
+            data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data.setdefault(filename, {})["last_action"] = int(time.time())
+    METADATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def derive_key(password: str, salt: bytes) -> bytes:
