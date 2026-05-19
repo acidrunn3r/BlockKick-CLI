@@ -17,7 +17,10 @@ from .wallet.keystore import (
     clear_session,
     get_last_action,
     update_last_action,
+    get_node_url,
+    set_node_url,
 )
+from .blockchain.mining import fetch_candidate, mine, submit_block
 
 console = Console()
 
@@ -258,6 +261,92 @@ def wallet_deselect():
     set_selected_wallet("")
 
     console.print(f"[green]Wallet deselected:[/green] {selected}")
+
+
+# ==== MINE COMMAND ====
+
+@app.command("mine")
+def mine_cmd(
+    node: str = typer.Option(
+        None, "--node", "-n",
+        help="Node URL (e.g. http://localhost:8080). Defaults to saved config."
+    ),
+):
+    """
+    Mine a block on the BlockKick blockchain.
+
+    Uses the currently selected wallet as the reward recipient.
+    Runs proof-of-work locally and submits the block to the node.
+    """
+    from .wallet.keystore import get_session_private_key, KEYSTORE_DIR
+    import json as _json
+
+    # Resolve wallet
+    session_filename, _ = get_session_private_key()
+    selected = get_selected_wallet()
+    wallet_file = session_filename or selected
+
+    if not wallet_file:
+        console.print("[red]No wallet selected.[/red]")
+        console.print("[dim]Run: blockkick wallet select <filename>[/dim]")
+        raise typer.Exit(1)
+
+    try:
+        data = _json.loads((KEYSTORE_DIR / wallet_file).read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+    except Exception as e:
+        console.print(f"[red]Error reading wallet:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Resolve node URL
+    node_url = node or get_node_url()
+    if node:
+        set_node_url(node)
+
+    console.print(f"[bold]Mining with wallet:[/bold] {wallet_file}")
+    console.print(f"[bold]Node:[/bold] {node_url}")
+    console.print(f"[bold]Public key:[/bold] {public_key[:16]}...")
+
+    # Fetch candidate
+    try:
+        console.print("\n[dim]Fetching block candidate...[/dim]")
+        candidate = fetch_candidate(node_url, public_key)
+    except Exception as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1)
+
+    difficulty = candidate["difficulty"]
+    reward = candidate["reward"]
+    block_index = candidate["block_template"]["index"]
+
+    console.print(f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins")
+    console.print(f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n")
+
+    # Run PoW
+    try:
+        with console.status("[yellow]Hashing...[/yellow]", spinner="dots"):
+            nonce, block_hash, elapsed = mine(candidate)
+    except KeyboardInterrupt:
+        console.print("\n[red]Mining cancelled.[/red]")
+        raise typer.Exit(0)
+
+    console.print(f"[green]Block found![/green]")
+    console.print(f"Nonce:   [bold]{nonce}[/bold]")
+    console.print(f"Hash:    [bold]{block_hash}[/bold]")
+    console.print(f"Time:    [bold]{elapsed:.2f}s[/bold]")
+
+    # Submit
+    try:
+        console.print("\n[dim]Submitting block...[/dim]")
+        result = submit_block(node_url, candidate, nonce)
+    except Exception as e:
+        console.print(f"[red]Submission failed:[/red] {e}")
+        raise typer.Exit(1)
+
+    update_last_action(wallet_file)
+
+    console.print(f"\n[green bold]Block accepted![/green bold]")
+    console.print(f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}...")
 
 
 if __name__ == "__main__":

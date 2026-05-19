@@ -85,6 +85,36 @@ def clear_session() -> None:
         SESSION_FILE.unlink()
 
 
+DEFAULT_NODE_URL = "http://localhost:8080"
+
+
+def get_node_url() -> str:
+    """Return the configured node URL, falling back to the default."""
+    if not CONFIG_FILE.exists():
+        return DEFAULT_NODE_URL
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return data.get("node_url", DEFAULT_NODE_URL)
+    except Exception:
+        return DEFAULT_NODE_URL
+
+
+def set_node_url(url: str) -> None:
+    """Persist the node URL to config.
+
+    Args:
+        url: Base URL of the BlockKick node (e.g. http://localhost:8080).
+    """
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["node_url"] = url
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def get_last_action(filename: str) -> int | None:
     """Return the last action timestamp for a wallet, or None if not recorded.
 
