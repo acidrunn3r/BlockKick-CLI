@@ -15,6 +15,35 @@ console = Console()
 KEYSTORE_DIR = Path.home() / ".blockkick" / "keystores"
 KEYSTORE_DIR.mkdir(parents=True, exist_ok=True)
 
+CONFIG_FILE = Path.home() / ".blockkick" / "config.json"
+
+
+def get_selected_wallet() -> str | None:
+    """Return the filename of the currently selected wallet, or None."""
+    if not CONFIG_FILE.exists():
+        return None
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return data.get("selected_wallet")
+    except Exception:
+        return None
+
+
+def set_selected_wallet(filename: str) -> None:
+    """Persist the selected wallet filename to config.
+
+    Args:
+        filename: Keystore filename (e.g. keystore-abc123.json).
+    """
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["selected_wallet"] = filename
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
 
 def derive_key(password: str, salt: bytes) -> bytes:
     """Derive strong key from password using scrypt (memory-hard KDF).

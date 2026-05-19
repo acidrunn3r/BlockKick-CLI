@@ -7,7 +7,13 @@ from getpass import getpass
 from rich.console import Console
 from rich.table import Table
 
-from .wallet.keystore import create_keystore, KEYSTORE_DIR, decrypt_keystore
+from .wallet.keystore import (
+    create_keystore,
+    KEYSTORE_DIR,
+    decrypt_keystore,
+    get_selected_wallet,
+    set_selected_wallet,
+)
 
 console = Console()
 _unlocked_wallet: dict[str, bytes] | None = None
@@ -109,12 +115,15 @@ def wallet_list():
         )
         return
     
+    selected = get_selected_wallet()
+
     table = Table(title=f"Wallets found: {len(keystores)}", show_lines=True)
     table.add_column("№", style="dim", width=4)
     table.add_column("Public Key", style="cyan", no_wrap=True)
     table.add_column("Created", style="magenta")
     table.add_column("File", style="green")
-    
+    table.add_column("", width=2)
+
     for idx, path in enumerate(sorted(keystores), 1):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -123,8 +132,9 @@ def wallet_list():
         except Exception:
             pub_short = "???"
             ts = "unknown"
-        
-        table.add_row(str(idx), pub_short, ts, path.name)
+
+        active = "*" if path.name == selected else ""
+        table.add_row(str(idx), pub_short, ts, path.name, active)
     
     console.print(table)
     console.print(f"[dim]Storage path: {KEYSTORE_DIR}[/dim]")
@@ -171,6 +181,35 @@ def wallet_info(
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
+
+@wallet_app.command("select")
+def wallet_select(
+    filename: str = typer.Argument(..., help="Keystore file name (e.g. keystore-abc123.json)")
+):
+    """
+    Select a wallet as the active one for future commands (mine, login, etc.).
+
+    The selection is persisted to ~/.blockkick/config.json.
+    """
+    filepath = KEYSTORE_DIR / filename
+
+    if not filepath.exists():
+        console.print(f"[red]File not found:[/red] {filepath}")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+    except Exception as e:
+        console.print(f"[red]Error reading keystore:[/red] {e}")
+        raise typer.Exit(1)
+
+    set_selected_wallet(filename)
+
+    console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
+    console.print(f"Public key: [bold]{public_key}[/bold]")
+    console.print(f"[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]")
+
 
 @wallet_app.command("unlock")
 def wallet_unlock(
