@@ -90,3 +90,8 @@ python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 disable_error_code = ["unused-ignore"]
+mypy_path = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["blockkick.cli"]
+disable_error_code = ["misc"]
