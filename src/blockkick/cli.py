@@ -27,7 +27,7 @@ from .wallet.keystore import (
     get_session_private_key,
 )
 from .blockchain.mining import fetch_candidate, mine, submit_block
-from .api.client import request_challenge, auth_login, update_profile, get_profile
+from .api.client import request_challenge, auth_login, update_profile, get_profile, list_projects
 import httpx
 import binascii
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -697,6 +697,45 @@ def profile_update(
     console.print(f"Name: [bold]{data.get('display_name')}[/bold]")
     if data.get("bio"):
         console.print(f"Bio:  [bold]{data['bio']}[/bold]")
+
+
+# ==== PROJECTS COMMAND ====
+
+@app.command("projects")
+def projects_cmd(
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    List all crowdfunding projects on BlockKick.
+    """
+    api_url = api or get_api_url()
+
+    try:
+        projects = list_projects(api_url)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    if not projects:
+        console.print("No projects found yet.")
+        return
+
+    table = Table(title=f"Projects ({len(projects)})", show_lines=True)
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Name", style="bold")
+    table.add_column("Goal", justify="right", style="cyan")
+    table.add_column("Raised", justify="right", style="green")
+    table.add_column("Status", style="magenta")
+
+    for p in projects:
+        goal = str(p["goal_amount"])
+        raised = str(p["raised_amount"])
+        table.add_row(p["project_id"], p["name"], goal, raised, p["status"])
+
+    console.print(table)
 
 
 if __name__ == "__main__":

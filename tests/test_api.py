@@ -328,6 +328,49 @@ class TestProfileUpdate:
         assert "Failed to reach API" in result.output
 
 
+# ==== projects ====
+
+FAKE_PROJECTS = [
+    {"project_id": "proj_aabbccdd11223344", "name": "BlockKick Fund", "goal_amount": 1000, "raised_amount": 250, "status": "ACTIVE"},
+    {"project_id": "proj_eeff00112233aabb", "name": "DeFi Launch", "goal_amount": 5000, "raised_amount": 5000, "status": "SUCCESS"},
+]
+
+
+class TestProjects:
+
+    def test_shows_projects_table(self, isolated_paths):
+        with patch("blockkick.cli.list_projects", return_value=FAKE_PROJECTS):
+            result = runner.invoke(app, ["projects", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "BlockKick Fund" in result.output
+        assert "DeFi Launch" in result.output
+        assert "ACTIVE" in result.output
+        assert "SUCCESS" in result.output
+
+    def test_empty_list_shows_message(self, isolated_paths):
+        with patch("blockkick.cli.list_projects", return_value=[]):
+            result = runner.invoke(app, ["projects", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "No projects" in result.output
+
+    def test_network_error_exits_with_error(self, isolated_paths):
+        import httpx
+        with patch("blockkick.cli.list_projects", side_effect=httpx.ConnectError("refused")):
+            result = runner.invoke(app, ["projects", "--api", API_URL])
+
+        assert result.exit_code != 0
+        assert "Failed to reach API" in result.output
+
+    def test_shows_goal_and_raised(self, isolated_paths):
+        with patch("blockkick.cli.list_projects", return_value=FAKE_PROJECTS):
+            result = runner.invoke(app, ["projects", "--api", API_URL])
+
+        assert "1000" in result.output
+        assert "250" in result.output
+
+
 # ==== config set-api ====
 
 class TestConfigSetApi:

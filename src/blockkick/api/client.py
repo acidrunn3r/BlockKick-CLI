@@ -82,6 +82,26 @@ def update_profile(api_url: str, access_token: str, display_name: str, bio: str 
     return response.json()
 
 
+def list_projects(api_url: str) -> list:
+    """Fetch all crowdfunding projects.
+
+    Args:
+        api_url: Base URL of the BlockKick API.
+
+    Returns:
+        list: List of project summaries.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors.
+    """
+    response = httpx.get(
+        f"{api_url.rstrip('/')}/api/v1/projects",
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def get_profile(api_url: str, access_token: str) -> dict:
     """Fetch the authenticated user's profile.
 
