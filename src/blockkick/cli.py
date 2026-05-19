@@ -21,6 +21,7 @@ from .wallet.keystore import (
     set_node_url,
 )
 from .blockchain.mining import fetch_candidate, mine, submit_block
+import httpx
 
 console = Console()
 
@@ -261,6 +262,49 @@ def wallet_deselect():
     set_selected_wallet("")
 
     console.print(f"[green]Wallet deselected:[/green] {selected}")
+
+
+# ==== BALANCE COMMAND ====
+
+@app.command("balance")
+def balance_cmd(
+    node: str = typer.Option(
+        None, "--node", "-n",
+        help="Node URL. Defaults to saved config."
+    ),
+):
+    """
+    Show the coin balance of the currently selected wallet.
+    """
+    selected = get_selected_wallet()
+
+    if not selected:
+        console.print("[red]No wallet selected.[/red]")
+        console.print("[dim]Run: blockkick wallet select <filename>[/dim]")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads((KEYSTORE_DIR / selected).read_text(encoding="utf-8"))
+        public_key = data["public_key_hex"]
+    except Exception as e:
+        console.print(f"[red]Error reading wallet:[/red] {e}")
+        raise typer.Exit(1)
+
+    node_url = node or get_node_url()
+
+    try:
+        response = httpx.get(
+            f"{node_url.rstrip('/')}/api/v1/balance/{public_key}",
+            timeout=10,
+        )
+        response.raise_for_status()
+        balance = response.json()["balance"]
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"Wallet:  [bold]{selected}[/bold]")
+    console.print(f"Balance: [bold green]{balance} coins[/bold green]")
 
 
 # ==== MINE COMMAND ====
