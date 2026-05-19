@@ -13,10 +13,11 @@ from .wallet.keystore import (
     decrypt_keystore,
     get_selected_wallet,
     set_selected_wallet,
+    save_session,
+    clear_session,
 )
 
 console = Console()
-_unlocked_wallet: dict[str, bytes] | None = None
 
 app = typer.Typer(
     name="blockkick",
@@ -184,36 +185,7 @@ def wallet_info(
 
 @wallet_app.command("select")
 def wallet_select(
-    filename: str = typer.Argument(..., help="Keystore file name (e.g. keystore-abc123.json)")
-):
-    """
-    Select a wallet as the active one for future commands (mine, login, etc.).
-
-    The selection is persisted to ~/.blockkick/config.json.
-    """
-    filepath = KEYSTORE_DIR / filename
-
-    if not filepath.exists():
-        console.print(f"[red]File not found:[/red] {filepath}")
-        raise typer.Exit(1)
-
-    try:
-        data = json.loads(filepath.read_text(encoding="utf-8"))
-        public_key = data["public_key_hex"]
-    except Exception as e:
-        console.print(f"[red]Error reading keystore:[/red] {e}")
-        raise typer.Exit(1)
-
-    set_selected_wallet(filename)
-
-    console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
-    console.print(f"Public key: [bold]{public_key}[/bold]")
-    console.print(f"[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]")
-
-
-@wallet_app.command("unlock")
-def wallet_unlock(
-    filename: str = typer.Argument(..., help="Keystore file name"),
+    filename: str = typer.Argument(..., help="Keystore file name (e.g. keystore-abc123.json)"),
     password: str = typer.Option(
         None, "--password", "-p",
         hide_input=True,
@@ -221,77 +193,55 @@ def wallet_unlock(
     ),
 ):
     """
-    Unlock a wallet, locking currently unlocked wallet.
-    
-    The decrypted key is stored temporarily in memory for signing transactions.
+    Select a wallet as the active one for future commands (mine, login, etc.).
+
+    Decrypts the keystore to verify the password, then persists the wallet
+    selection and the decrypted key to ~/.blockkick/ for future use.
     """
-    global _unlocked_wallet
-    
     filepath = KEYSTORE_DIR / filename
-    
+
     if not filepath.exists():
         console.print(f"[red]File not found:[/red] {filepath}")
         raise typer.Exit(1)
-    
+
     try:
-        if _unlocked_wallet:
-            old_filename = list(_unlocked_wallet.keys())[0]
-            console.print(f"[dim]Disabling current wallet: {old_filename}[/dim]")
-            _unlocked_wallet = None
-        
         if password is None:
             password = getpass("Enter wallet password: ")
-        
+
         private_key_bytes = decrypt_keystore(filepath, password)
-        
-        _unlocked_wallet = {filename: private_key_bytes}
-        
+
         data = json.loads(filepath.read_text(encoding="utf-8"))
         public_key = data["public_key_hex"]
-        
-        console.print(f"\n[green]Wallet unlocked![/green]")
-        console.print(f"Public key: [bold]{public_key}[/bold]")
-        console.print(f"File: [bold]{filename}[/bold]")
-        console.print(f"[dim]Private key is active until the end of this session[/dim]")
-        
     except ValueError as e:
-        console.print(f"[red]Decrpyption error:[/red]{e}")
+        console.print(f"[red]Decryption error:[/red] {e}")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]Unknown error: [/red]{e}")
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-@wallet_app.command("lock")
-def wallet_lock():
-    """
-    Lock the currently unlocked wallet.
-    """
-    global _unlocked_wallet
-    
-    if _unlocked_wallet:
-        filename = list(_unlocked_wallet.keys())[0]
-        _unlocked_wallet = None
-        console.print(f"[green]Wallet locked: {filename}[/green]")
-    else:
-        console.print("There is no unlocked wallet.")
+    set_selected_wallet(filename)
+    save_session(filename, private_key_bytes)
 
-@wallet_app.command("status")
-def wallet_status():
+    console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
+    console.print(f"Public key: [bold]{public_key}[/bold]")
+    console.print(f"[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]")
+
+
+@wallet_app.command("deselect")
+def wallet_deselect():
     """
-    Show status of the currently unlocked wallet.
+    Deselect the active wallet and clear the session.
     """
-    if not _unlocked_wallet:
-        console.print("There is no unlocked wallet.")
-        console.print("[dim]Use: blockkick wallet unlock <Keystore file name>[/dim]")
+    selected = get_selected_wallet()
+
+    if not selected:
+        console.print("No wallet is currently selected.")
         return
-    
-    filename = list(_unlocked_wallet.keys())[0]
-    data = json.loads((KEYSTORE_DIR / filename).read_text(encoding="utf-8"))
-    public_key = data["public_key_hex"]
-    
-    console.print(f"[green]Currently unlocked wallet:[/green]")
-    console.print(f"File: [bold]{filename}[/bold]")
-    console.print(f"Public Key: [bold]{public_key}[/bold]")
+
+    clear_session()
+    set_selected_wallet("")
+
+    console.print(f"[green]Wallet deselected:[/green] {selected}")
 
 
 if __name__ == "__main__":

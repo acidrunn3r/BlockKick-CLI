@@ -16,6 +16,7 @@ KEYSTORE_DIR = Path.home() / ".blockkick" / "keystores"
 KEYSTORE_DIR.mkdir(parents=True, exist_ok=True)
 
 CONFIG_FILE = Path.home() / ".blockkick" / "config.json"
+SESSION_FILE = Path.home() / ".blockkick" / "session.json"
 
 
 def get_selected_wallet() -> str | None:
@@ -43,6 +44,44 @@ def set_selected_wallet(filename: str) -> None:
             data = {}
     data["selected_wallet"] = filename
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def save_session(filename: str, private_key_bytes: bytes) -> None:
+    """Save decrypted private key to session file (chmod 600).
+
+    Args:
+        filename: Keystore filename that was selected.
+        private_key_bytes: Decrypted private key bytes.
+    """
+    session_data = {
+        "wallet": filename,
+        "private_key_hex": binascii.hexlify(private_key_bytes).decode(),
+    }
+    SESSION_FILE.write_text(json.dumps(session_data, indent=2), encoding="utf-8")
+    SESSION_FILE.chmod(0o600)
+
+
+def get_session_private_key() -> tuple[str, bytes] | tuple[None, None]:
+    """Return (filename, private_key_bytes) from session, or (None, None) if none.
+
+    Returns:
+        tuple: (wallet filename, private key bytes) or (None, None).
+    """
+    if not SESSION_FILE.exists():
+        return None, None
+    try:
+        data = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        filename = data["wallet"]
+        private_key_bytes = binascii.unhexlify(data["private_key_hex"])
+        return filename, private_key_bytes
+    except Exception:
+        return None, None
+
+
+def clear_session() -> None:
+    """Remove the session file."""
+    if SESSION_FILE.exists():
+        SESSION_FILE.unlink()
 
 
 def derive_key(password: str, salt: bytes) -> bytes:
