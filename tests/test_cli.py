@@ -168,3 +168,50 @@ class TestWalletDeselect:
         result = runner.invoke(app, ["wallet", "deselect"])
         assert result.exit_code == 0
         assert "No wallet" in result.output
+
+
+# ==== config set-node ====
+
+class TestConfigSetNode:
+
+    def test_persists_url(self, isolated_paths):
+        from blockkick.wallet.keystore import get_node_url
+        runner.invoke(app, ["config", "set-node", "http://localhost:3000"])
+        assert get_node_url() == "http://localhost:3000"
+
+    def test_shows_confirmation(self, isolated_paths):
+        result = runner.invoke(app, ["config", "set-node", "http://localhost:3000"])
+        assert result.exit_code == 0
+        assert "http://localhost:3000" in result.output
+
+    def test_overwrites_previous_url(self, isolated_paths):
+        from blockkick.wallet.keystore import get_node_url
+        runner.invoke(app, ["config", "set-node", "http://localhost:3000"])
+        runner.invoke(app, ["config", "set-node", "http://192.168.1.1:8080"])
+        assert get_node_url() == "http://192.168.1.1:8080"
+
+
+# ==== config show ====
+
+class TestConfigShow:
+
+    def test_shows_default_node_url(self, isolated_paths):
+        from blockkick.wallet.keystore import DEFAULT_NODE_URL
+        result = runner.invoke(app, ["config", "show"])
+        assert result.exit_code == 0
+        assert DEFAULT_NODE_URL in result.output
+
+    def test_shows_configured_node_url(self, isolated_paths):
+        runner.invoke(app, ["config", "set-node", "http://localhost:3000"])
+        result = runner.invoke(app, ["config", "show"])
+        assert "http://localhost:3000" in result.output
+
+    def test_shows_dash_when_no_wallet_selected(self, isolated_paths):
+        result = runner.invoke(app, ["config", "show"])
+        assert "—" in result.output
+
+    def test_shows_selected_wallet(self, isolated_paths):
+        filename = _create_wallet()
+        runner.invoke(app, ["wallet", "select", filename, "--password", "password123"])
+        result = runner.invoke(app, ["config", "show"])
+        assert filename in result.output
