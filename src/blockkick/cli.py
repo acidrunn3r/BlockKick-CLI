@@ -61,6 +61,34 @@ def main(
     """BlockKick CLI — local wallet for BlockKick blockchain."""
     pass
 
+# ==== CONFIG COMMANDS ====
+config_app = typer.Typer(help="Configuration commands (node URL, etc.)")
+app.add_typer(config_app, name="config")
+
+@config_app.command("set-node")
+def config_set_node(
+    url: str = typer.Argument(..., help="Node URL (e.g. http://localhost:3000)")
+):
+    """
+    Set the default node URL for all commands (mine, balance, etc.).
+
+    Persisted to ~/.blockkick/config.json.
+    """
+    set_node_url(url)
+    console.print(f"[green]Node URL set to:[/green] [bold]{url}[/bold]")
+
+@config_app.command("show")
+def config_show():
+    """
+    Show current configuration.
+    """
+    node_url = get_node_url()
+    selected = get_selected_wallet()
+
+    console.print(f"Node URL: [bold]{node_url}[/bold]")
+    console.print(f"Selected wallet: [bold]{selected or '—'}[/bold]")
+
+
 # ==== WALLET COMMANDS ====
 wallet_app = typer.Typer(help="Wallet management commands (create, list, info)")
 app.add_typer(wallet_app, name="wallet")
@@ -344,8 +372,6 @@ def mine_cmd(
 
     # Resolve node URL
     node_url = node or get_node_url()
-    if node:
-        set_node_url(node)
 
     console.print(f"[bold]Mining with wallet:[/bold] {wallet_file}")
     console.print(f"[bold]Node:[/bold] {node_url}")
