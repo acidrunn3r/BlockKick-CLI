@@ -19,9 +19,18 @@ from .wallet.keystore import (
     update_last_action,
     get_node_url,
     set_node_url,
+    get_api_url,
+    set_api_url,
+    save_api_tokens,
+    get_api_access_token,
+    clear_api_tokens,
+    get_session_private_key,
 )
 from .blockchain.mining import fetch_candidate, mine, submit_block
+from .api.client import request_challenge, auth_login, update_profile, get_profile, list_projects
 import httpx
+import binascii
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 console = Console()
 
@@ -77,16 +86,32 @@ def config_set_node(
     set_node_url(url)
     console.print(f"[green]Node URL set to:[/green] [bold]{url}[/bold]")
 
+@config_app.command("set-api")
+def config_set_api(
+    url: str = typer.Argument(..., help="API URL (e.g. http://localhost:8000)")
+):
+    """
+    Set the default BlockKick API URL for register, login, etc.
+
+    Persisted to ~/.blockkick/config.json.
+    """
+    set_api_url(url)
+    console.print(f"[green]API URL set to:[/green] [bold]{url}[/bold]")
+
 @config_app.command("show")
 def config_show():
     """
     Show current configuration.
     """
     node_url = get_node_url()
+    api_url = get_api_url()
     selected = get_selected_wallet()
+    token = get_api_access_token()
 
-    console.print(f"Node URL: [bold]{node_url}[/bold]")
+    console.print(f"Node URL:        [bold]{node_url}[/bold]")
+    console.print(f"API URL:         [bold]{api_url}[/bold]")
     console.print(f"Selected wallet: [bold]{selected or '—'}[/bold]")
+    console.print(f"API logged in:   [bold]{'yes' if token else 'no'}[/bold]")
 
 
 # ==== WALLET COMMANDS ====
@@ -350,7 +375,6 @@ def mine_cmd(
     Uses the currently selected wallet as the reward recipient.
     Runs proof-of-work locally and submits the block to the node.
     """
-    from .wallet.keystore import get_session_private_key, KEYSTORE_DIR
     import json as _json
 
     # Resolve wallet
@@ -417,6 +441,301 @@ def mine_cmd(
 
     console.print(f"\n[green bold]Block accepted![/green bold]")
     console.print(f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}...")
+
+
+def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
+    """Return (wallet_filename, private_key_bytes, public_key_hex).
+
+    Tries the session first; falls back to prompting for password if a wallet
+    is selected but no session is active.
+
+    Raises:
+        typer.Exit: If no wallet is available.
+    """
+    import json as _json
+
+    session_filename, private_key_bytes = get_session_private_key()
+
+    if session_filename and private_key_bytes:
+        data = _json.loads((KEYSTORE_DIR / session_filename).read_text(encoding="utf-8"))
+        return session_filename, private_key_bytes, data["public_key_hex"]
+
+    selected = get_selected_wallet()
+    if not selected:
+        console.print("[red]No wallet selected.[/red]")
+        console.print("[dim]Run: blockkick wallet select <filename>[/dim]")
+        raise typer.Exit(1)
+
+    filepath = KEYSTORE_DIR / selected
+    if password is None:
+        from getpass import getpass as _getpass
+        password = _getpass("Enter wallet password: ")
+
+    try:
+        private_key_bytes = decrypt_keystore(filepath, password)
+    except ValueError as e:
+        console.print(f"[red]Decryption error:[/red] {e}")
+        raise typer.Exit(1)
+
+    data = _json.loads(filepath.read_text(encoding="utf-8"))
+    return selected, private_key_bytes, data["public_key_hex"]
+
+
+# ==== AUTH COMMANDS ====
+
+@app.command("register")
+def register_cmd(
+    name: str = typer.Option(
+        None, "--name",
+        help="Display name to set on your profile after registering."
+    ),
+    bio: str = typer.Option(
+        "", "--bio",
+        help="Short bio to set on your profile after registering."
+    ),
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+    password: str = typer.Option(
+        None, "--password", "-p",
+        hide_input=True,
+        help="Wallet password (if no active session)."
+    ),
+):
+    """
+    Register your wallet with the BlockKick API.
+
+    Performs a cryptographic challenge-response with your active wallet,
+    creating a new account if one doesn't exist yet. Optionally sets a
+    display name and bio on your profile.
+    """
+    wallet_file, private_key_bytes, public_key = _resolve_private_key(password)
+    api_url = api or get_api_url()
+
+    console.print(f"[bold]Wallet:[/bold] {wallet_file}")
+    console.print(f"[bold]API:[/bold] {api_url}")
+
+    try:
+        console.print("\n[dim]Requesting challenge...[/dim]")
+        nonce = request_challenge(api_url, public_key)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    private_key_obj = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+    signature_hex = binascii.hexlify(private_key_obj.sign(nonce.encode("utf-8"))).decode()
+
+    try:
+        console.print("[dim]Submitting signature...[/dim]")
+        tokens = auth_login(api_url, public_key, nonce, signature_hex)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Authentication failed:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    save_api_tokens(tokens["access_token"], tokens["refresh_token"])
+
+    if name:
+        try:
+            console.print("[dim]Setting profile...[/dim]")
+            update_profile(api_url, tokens["access_token"], name, bio)
+        except httpx.HTTPError as e:
+            console.print(f"[yellow]Warning: profile update failed:[/yellow] {e}")
+
+    console.print(f"\n[green bold]Registered![/green bold]")
+    console.print(f"Wallet: [bold]{public_key[:16]}...[/bold]")
+    if name:
+        console.print(f"Name:   [bold]{name}[/bold]")
+    console.print(f"[dim]Token saved. Use blockkick login to refresh.[/dim]")
+
+
+@app.command("login")
+def login_cmd(
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+    password: str = typer.Option(
+        None, "--password", "-p",
+        hide_input=True,
+        help="Wallet password (if no active session)."
+    ),
+):
+    """
+    Log in to the BlockKick API with your active wallet.
+
+    Performs a cryptographic challenge-response and stores the JWT token
+    locally for subsequent API commands.
+    """
+    wallet_file, private_key_bytes, public_key = _resolve_private_key(password)
+    api_url = api or get_api_url()
+
+    console.print(f"[bold]Wallet:[/bold] {wallet_file}")
+    console.print(f"[bold]API:[/bold] {api_url}")
+
+    try:
+        console.print("\n[dim]Requesting challenge...[/dim]")
+        nonce = request_challenge(api_url, public_key)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    private_key_obj = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+    signature_hex = binascii.hexlify(private_key_obj.sign(nonce.encode("utf-8"))).decode()
+
+    try:
+        console.print("[dim]Submitting signature...[/dim]")
+        tokens = auth_login(api_url, public_key, nonce, signature_hex)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Authentication failed:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    save_api_tokens(tokens["access_token"], tokens["refresh_token"])
+
+    try:
+        profile = get_profile(api_url, tokens["access_token"])
+        display = profile.get("display_name") or public_key[:16] + "..."
+    except httpx.HTTPError:
+        display = public_key[:16] + "..."
+
+    console.print(f"\n[green bold]Logged in![/green bold]")
+    console.print(f"Account: [bold]{display}[/bold]")
+    console.print(f"Wallet:  [bold]{public_key[:16]}...[/bold]")
+
+
+def _require_token(api: str | None) -> tuple[str, str]:
+    """Return (api_url, access_token) or exit with a helpful message."""
+    api_url = api or get_api_url()
+    token = get_api_access_token()
+    if not token:
+        console.print("[red]Not logged in.[/red]")
+        console.print("[dim]Run: blockkick login[/dim]")
+        raise typer.Exit(1)
+    return api_url, token
+
+
+# ==== PROFILE COMMANDS ====
+
+profile_app = typer.Typer(help="Manage your BlockKick API profile.")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("show")
+def profile_show(
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    Show your BlockKick API profile.
+
+    Fetches and displays display name, bio and wallet address from the API.
+    """
+    api_url, token = _require_token(api)
+
+    try:
+        data = get_profile(api_url, token)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            console.print("[red]Session expired.[/red]")
+            console.print("[dim]Run: blockkick login[/dim]")
+        else:
+            console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"Wallet:  [bold]{data['wallet_address']}[/bold]")
+    console.print(f"Name:    [bold]{data.get('display_name') or '—'}[/bold]")
+    console.print(f"Bio:     [bold]{data.get('bio') or '—'}[/bold]")
+
+
+@profile_app.command("update")
+def profile_update(
+    name: str = typer.Option(
+        ..., "--name",
+        help="New display name (max 100 characters)."
+    ),
+    bio: str = typer.Option(
+        "", "--bio",
+        help="Short bio."
+    ),
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    Update your BlockKick API profile.
+
+    Sets a new display name and optional bio on your account.
+    """
+    api_url, token = _require_token(api)
+
+    try:
+        data = update_profile(api_url, token, name, bio)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            console.print("[red]Session expired.[/red]")
+            console.print("[dim]Run: blockkick login[/dim]")
+        else:
+            console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Profile updated![/green]")
+    console.print(f"Name: [bold]{data.get('display_name')}[/bold]")
+    if data.get("bio"):
+        console.print(f"Bio:  [bold]{data['bio']}[/bold]")
+
+
+# ==== PROJECTS COMMAND ====
+
+@app.command("projects")
+def projects_cmd(
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    List all crowdfunding projects on BlockKick.
+    """
+    api_url = api or get_api_url()
+
+    try:
+        projects = list_projects(api_url)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    if not projects:
+        console.print("No projects found yet.")
+        return
+
+    table = Table(title=f"Projects ({len(projects)})", show_lines=True)
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Name", style="bold")
+    table.add_column("Goal", justify="right", style="cyan")
+    table.add_column("Raised", justify="right", style="green")
+    table.add_column("Status", style="magenta")
+
+    for p in projects:
+        goal = str(p["goal_amount"])
+        raised = str(p["raised_amount"])
+        table.add_row(p["project_id"], p["name"], goal, raised, p["status"])
+
+    console.print(table)
 
 
 if __name__ == "__main__":
