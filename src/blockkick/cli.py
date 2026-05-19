@@ -609,5 +609,95 @@ def login_cmd(
     console.print(f"Wallet:  [bold]{public_key[:16]}...[/bold]")
 
 
+def _require_token(api: str | None) -> tuple[str, str]:
+    """Return (api_url, access_token) or exit with a helpful message."""
+    api_url = api or get_api_url()
+    token = get_api_access_token()
+    if not token:
+        console.print("[red]Not logged in.[/red]")
+        console.print("[dim]Run: blockkick login[/dim]")
+        raise typer.Exit(1)
+    return api_url, token
+
+
+# ==== PROFILE COMMANDS ====
+
+profile_app = typer.Typer(help="Manage your BlockKick API profile.")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("show")
+def profile_show(
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    Show your BlockKick API profile.
+
+    Fetches and displays display name, bio and wallet address from the API.
+    """
+    api_url, token = _require_token(api)
+
+    try:
+        data = get_profile(api_url, token)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            console.print("[red]Session expired.[/red]")
+            console.print("[dim]Run: blockkick login[/dim]")
+        else:
+            console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"Wallet:  [bold]{data['wallet_address']}[/bold]")
+    console.print(f"Name:    [bold]{data.get('display_name') or '—'}[/bold]")
+    console.print(f"Bio:     [bold]{data.get('bio') or '—'}[/bold]")
+
+
+@profile_app.command("update")
+def profile_update(
+    name: str = typer.Option(
+        ..., "--name",
+        help="New display name (max 100 characters)."
+    ),
+    bio: str = typer.Option(
+        "", "--bio",
+        help="Short bio."
+    ),
+    api: str = typer.Option(
+        None, "--api",
+        help="API URL. Defaults to saved config."
+    ),
+):
+    """
+    Update your BlockKick API profile.
+
+    Sets a new display name and optional bio on your account.
+    """
+    api_url, token = _require_token(api)
+
+    try:
+        data = update_profile(api_url, token, name, bio)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            console.print("[red]Session expired.[/red]")
+            console.print("[dim]Run: blockkick login[/dim]")
+        else:
+            console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Profile updated![/green]")
+    console.print(f"Name: [bold]{data.get('display_name')}[/bold]")
+    if data.get("bio"):
+        console.print(f"Bio:  [bold]{data['bio']}[/bold]")
+
+
 if __name__ == "__main__":
     app()

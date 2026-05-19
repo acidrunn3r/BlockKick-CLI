@@ -1,4 +1,4 @@
-"""Tests for register and login commands."""
+"""Tests for register, login, and profile commands."""
 
 import json
 import pytest
@@ -201,6 +201,131 @@ class TestLogin:
             runner.invoke(app, ["login", "--api", API_URL])
 
         assert ks.get_api_access_token() == "new_token"
+
+
+# ==== profile show ====
+
+class TestProfileShow:
+
+    def test_no_token_exits_with_error(self, isolated_paths):
+        result = runner.invoke(app, ["profile", "show", "--api", API_URL])
+        assert result.exit_code != 0
+        assert "Not logged in" in result.output
+
+    def test_shows_profile(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_profile = {"wallet_address": "a" * 64, "display_name": "Alice", "bio": "Builder"}
+        with patch("blockkick.cli.get_profile", return_value=mock_profile):
+            result = runner.invoke(app, ["profile", "show", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "Alice" in result.output
+        assert "Builder" in result.output
+        assert "a" * 64 in result.output
+
+    def test_empty_name_shows_dash(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_profile = {"wallet_address": "a" * 64, "display_name": "", "bio": ""}
+        with patch("blockkick.cli.get_profile", return_value=mock_profile):
+            result = runner.invoke(app, ["profile", "show", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "—" in result.output
+
+    def test_expired_token_shows_helpful_message(self, isolated_paths):
+        import httpx
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        with patch("blockkick.cli.get_profile",
+                   side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=mock_response)):
+            result = runner.invoke(app, ["profile", "show", "--api", API_URL])
+
+        assert result.exit_code != 0
+        assert "expired" in result.output.lower()
+
+    def test_network_error_exits_with_error(self, isolated_paths):
+        import httpx
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        with patch("blockkick.cli.get_profile", side_effect=httpx.ConnectError("refused")):
+            result = runner.invoke(app, ["profile", "show", "--api", API_URL])
+
+        assert result.exit_code != 0
+        assert "Failed to reach API" in result.output
+
+
+# ==== profile update ====
+
+class TestProfileUpdate:
+
+    def test_no_token_exits_with_error(self, isolated_paths):
+        result = runner.invoke(app, ["profile", "update", "--name", "Alice", "--api", API_URL])
+        assert result.exit_code != 0
+        assert "Not logged in" in result.output
+
+    def test_missing_name_exits_with_error(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        result = runner.invoke(app, ["profile", "update", "--api", API_URL])
+        assert result.exit_code != 0
+
+    def test_success_shows_updated_name(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_profile = {"wallet_address": "a" * 64, "display_name": "Alice", "bio": ""}
+        with patch("blockkick.cli.update_profile", return_value=mock_profile):
+            result = runner.invoke(app, ["profile", "update", "--name", "Alice", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "Alice" in result.output
+        assert "updated" in result.output.lower()
+
+    def test_passes_bio_to_api(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_profile = {"wallet_address": "a" * 64, "display_name": "Alice", "bio": "Builder"}
+        with patch("blockkick.cli.update_profile", return_value=mock_profile) as mock_update:
+            runner.invoke(app, ["profile", "update", "--name", "Alice", "--bio", "Builder", "--api", API_URL])
+
+        mock_update.assert_called_once_with(API_URL, FAKE_ACCESS_TOKEN, "Alice", "Builder")
+
+    def test_expired_token_shows_helpful_message(self, isolated_paths):
+        import httpx
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_response.text = "Unauthorized"
+        with patch("blockkick.cli.update_profile",
+                   side_effect=httpx.HTTPStatusError("401", request=MagicMock(), response=mock_response)):
+            result = runner.invoke(app, ["profile", "update", "--name", "Alice", "--api", API_URL])
+
+        assert result.exit_code != 0
+        assert "expired" in result.output.lower()
+
+    def test_network_error_exits_with_error(self, isolated_paths):
+        import httpx
+        import blockkick.wallet.keystore as ks
+        ks.save_api_tokens(FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN)
+
+        with patch("blockkick.cli.update_profile", side_effect=httpx.ConnectError("refused")):
+            result = runner.invoke(app, ["profile", "update", "--name", "Alice", "--api", API_URL])
+
+        assert result.exit_code != 0
+        assert "Failed to reach API" in result.output
 
 
 # ==== config set-api ====
