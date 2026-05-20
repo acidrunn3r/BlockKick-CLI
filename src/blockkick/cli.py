@@ -16,7 +16,9 @@ from .api.client import (
     auth_login,
     get_balance,
     get_profile,
+    get_project,
     get_transaction,
+    get_wallet_transactions,
     list_projects,
     request_challenge,
     submit_transaction,
@@ -1072,6 +1074,165 @@ def tx_cmd(
     tx_data = data.get("data", {})
     if tx_data:
         console.print(f"Data:      [bold]{tx_data}[/bold]")
+
+
+# ==== HISTORY COMMAND ====
+
+
+@app.command("history")
+def history_cmd(
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
+) -> None:
+    """
+    Show your wallet's transaction history.
+
+    Displays all confirmed transfers, donations, and project events where
+    your wallet is the sender or recipient, newest first.
+    """
+    selected = get_selected_wallet()
+    if not selected:
+        console.print(
+            "[red]No wallet selected.[/red] Run: blockkick wallet select <file>"
+        )
+        raise typer.Exit(1)
+    keystore_path = KEYSTORE_DIR / selected
+    keystore_data = json.loads(keystore_path.read_text(encoding="utf-8"))
+    public_key: str = keystore_data["public_key_hex"]
+    api_url = api or get_api_url()
+
+    try:
+        txs = get_wallet_transactions(api_url, public_key)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    if not txs:
+        console.print("No transactions found for this wallet.")
+        return
+
+    table = Table(title=f"Transaction history — {public_key[:16]}…", show_lines=True)
+    table.add_column("Block", justify="right", style="dim", no_wrap=True)
+    table.add_column("Type", no_wrap=True)
+    table.add_column("Dir", justify="center", no_wrap=True)
+    table.add_column("Amount", justify="right", style="cyan")
+    table.add_column("Counterparty", style="dim")
+    table.add_column("TX ID", style="dim", no_wrap=True)
+
+    type_labels: dict[str, str] = {
+        "Transfer": "Transfer",
+        "FundProject": "Donate",
+        "CreateProject": "New project",
+        "Coinbase": "Mining reward",
+    }
+
+    for tx in txs:
+        tx_type: str = tx.get("tx_type", "")
+        from_addr: str | None = tx.get("from_address")
+        to_addr: str | None = tx.get("to_address")
+        amount = tx.get("amount")
+        block = str(tx.get("block_height", "—"))
+        tx_id: str = tx.get("tx_id", "")
+
+        is_outgoing = from_addr == public_key
+        direction = "[red]↑ out[/red]" if is_outgoing else "[green]↓ in[/green]"
+
+        counterparty = to_addr if is_outgoing else from_addr
+        counterparty_str = f"{counterparty[:16]}…" if counterparty else "—"
+
+        amount_str = f"{amount}" if amount is not None else "—"
+        label = type_labels.get(tx_type, tx_type)
+        tx_short = f"{tx_id[:12]}…" if tx_id else "—"
+
+        table.add_row(block, label, direction, amount_str, counterparty_str, tx_short)
+
+    console.print(table)
+
+
+# ==== PROJECT STATUS COMMAND ====
+
+
+@project_app.command("status")
+def project_status_cmd(
+    project_id: str = typer.Argument(..., help="Project ID (proj_…)."),
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
+) -> None:
+    """
+    Show full detail for a crowdfunding project.
+
+    Displays goal vs raised progress, current status, and the five most
+    recent backers.
+    """
+    api_url = api or get_api_url()
+
+    try:
+        p = get_project(api_url, project_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Project not found:[/red] {project_id}")
+        elif e.response.status_code == 503:
+            console.print("[red]Node unreachable — project data unavailable.[/red]")
+        else:
+            console.print(f"[red]API error:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach API:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    goal: int = p.get("goal_amount", 0)
+    raised: int = p.get("raised_amount", 0)
+    pct = int(raised / goal * 100) if goal > 0 else 0
+    bar_filled = pct // 5
+    progress_bar = f"[{'█' * bar_filled}{'░' * (20 - bar_filled)}] {pct}%"
+
+    status_colors: dict[str, str] = {
+        "ACTIVE": "green",
+        "SUCCESS": "bold green",
+        "FAILED": "red",
+        "CREATED": "yellow",
+        "COMPLETED": "cyan",
+    }
+    status_str = p.get("status", "—")
+    status_color = status_colors.get(status_str, "white")
+
+    console.print(f"\n[bold]{p.get('name', project_id)}[/bold]")
+    if p.get("description"):
+        console.print(f"[dim]{p['description']}[/dim]")
+    console.print(f"\nStatus:   [{status_color}]{status_str}[/{status_color}]")
+    console.print(f"Goal:     [bold]{goal} coins[/bold]")
+    console.print(f"Raised:   [bold cyan]{raised} coins[/bold cyan]  {progress_bar}")
+    if p.get("creator_wallet"):
+        console.print(f"Creator:  [dim]{p['creator_wallet'][:16]}…[/dim]")
+    if p.get("deadline_timestamp"):
+        deadline_dt = datetime.datetime.fromtimestamp(
+            p["deadline_timestamp"], tz=datetime.UTC
+        )
+        console.print(f"Deadline: [dim]{deadline_dt.strftime('%Y-%m-%d')}[/dim]")
+
+    backers: list[dict[str, object]] = p.get("recent_backers", [])
+    if backers:
+        console.print()
+        btable = Table(title="Recent backers", show_lines=False, box=None)
+        btable.add_column("Wallet", style="dim")
+        btable.add_column("Amount", justify="right", style="cyan")
+        btable.add_column("When", style="dim")
+        for b in backers:
+            addr = str(b.get("from_address", ""))
+            amt = str(b.get("amount", "—"))
+            ts = b.get("timestamp")
+            when = (
+                datetime.datetime.fromtimestamp(int(str(ts)), tz=datetime.UTC).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
+                if ts is not None
+                else "—"
+            )
+            btable.add_row(f"{addr[:16]}…" if addr else "—", amt, when)
+        console.print(btable)
+    else:
+        console.print("\n[dim]No backers yet.[/dim]")
 
 
 # ==== LOGOUT COMMAND ====

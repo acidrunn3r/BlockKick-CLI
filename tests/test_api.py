@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -182,3 +183,99 @@ class TestProjects:
         assert "DeFi Launch" in result.output
         assert "ACTIVE" in result.output
         assert "SUCCESS" in result.output
+
+
+# ==== history ====
+
+FAKE_WALLET = "a" * 64
+FAKE_TX_HISTORY = [
+    {
+        "tx_id": "b" * 64,
+        "tx_type": "Transfer",
+        "from_address": FAKE_WALLET,
+        "to_address": "c" * 64,
+        "amount": 10,
+        "project_id": None,
+        "block_height": 5,
+        "timestamp": 1000000,
+    },
+    {
+        "tx_id": "d" * 64,
+        "tx_type": "Coinbase",
+        "from_address": None,
+        "to_address": FAKE_WALLET,
+        "amount": 50,
+        "project_id": None,
+        "block_height": 3,
+        "timestamp": 999000,
+    },
+]
+
+
+class TestHistory:
+
+    def test_shows_history_table(self, isolated_paths):
+        import blockkick.wallet.keystore as ks
+
+        ks.set_selected_wallet("keystore-fake.json")
+        keystore_file = isolated_paths / "keystores" / "keystore-fake.json"
+        import json
+
+        keystore_file.write_text(json.dumps({"public_key_hex": FAKE_WALLET}))
+
+        with patch(
+            "blockkick.cli.get_wallet_transactions", return_value=FAKE_TX_HISTORY
+        ):
+            result = runner.invoke(app, ["history", "--api", API_URL])
+
+        assert result.exit_code == 0
+        assert "Transfer" in result.output
+        assert "Mining reward" in result.output
+
+    def test_no_wallet_selected_exits_with_error(self, isolated_paths):
+        result = runner.invoke(app, ["history", "--api", API_URL])
+        assert result.exit_code != 0
+        assert "No wallet selected" in result.output
+
+
+# ==== project status ====
+
+FAKE_PROJECT_DETAIL = {
+    "project_id": "proj_aabbccdd11223344",
+    "name": "BlockKick Fund",
+    "description": "A great project",
+    "goal_amount": 1000,
+    "raised_amount": 250,
+    "status": "ACTIVE",
+    "deadline_timestamp": 1999999999,
+    "creator_wallet": "a" * 64,
+    "recent_backers": [
+        {"from_address": "c" * 64, "amount": 100, "timestamp": 1000000},
+    ],
+}
+
+
+class TestProjectStatus:
+
+    def test_shows_project_detail(self, isolated_paths):
+        with patch("blockkick.cli.get_project", return_value=FAKE_PROJECT_DETAIL):
+            result = runner.invoke(
+                app, ["project", "status", "proj_aabbccdd11223344", "--api", API_URL]
+            )
+        assert result.exit_code == 0
+        assert "BlockKick Fund" in result.output
+        assert "250" in result.output
+        assert "ACTIVE" in result.output
+
+    def test_not_found_exits_with_error(self, isolated_paths):
+        from unittest.mock import MagicMock
+
+        err = httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock(status_code=404)
+        )
+        with patch("blockkick.cli.get_project", side_effect=err):
+            result = runner.invoke(
+                app, ["project", "status", "proj_notexist", "--api", API_URL]
+            )
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()

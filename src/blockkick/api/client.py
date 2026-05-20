@@ -182,6 +182,51 @@ def get_transaction(node_url: str, tx_id: str) -> dict[str, Any]:
     return result
 
 
+def get_wallet_transactions(api_url: str, address: str) -> list[Any]:
+    """Fetch indexed transaction history for a wallet address.
+
+    Args:
+        api_url: Base URL of the BlockKick API.
+        address: Hex-encoded Ed25519 public key (64 chars).
+
+    Returns:
+        list: Transactions where wallet is sender or recipient, newest first.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors.
+    """
+    response = httpx.get(
+        f"{api_url.rstrip('/')}/api/v1/wallets/{address}/transactions",
+        timeout=10,
+    )
+    response.raise_for_status()
+    result: list[Any] = response.json()
+    return result
+
+
+def get_project(api_url: str, project_id: str) -> dict[str, Any]:
+    """Fetch full detail for a single project including recent backers.
+
+    Args:
+        api_url: Base URL of the BlockKick API.
+        project_id: Project identifier (format proj_<16 hex chars>).
+
+    Returns:
+        dict: Project detail with project_id, name, goal_amount, raised_amount,
+              status, and recent_backers list.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors (404 if not found).
+    """
+    response = httpx.get(
+        f"{api_url.rstrip('/')}/api/v1/projects/{project_id}",
+        timeout=10,
+    )
+    response.raise_for_status()
+    result: dict[str, Any] = response.json()
+    return result
+
+
 def get_profile(api_url: str, access_token: str) -> dict[str, Any]:
     """Fetch the authenticated user's profile.
 
