@@ -3,11 +3,12 @@
 import hashlib
 import json
 import time
+from typing import Any
 
 import httpx
 
 
-def compute_pow_hash(header: dict, nonce: int) -> str:
+def compute_pow_hash(header: dict[str, Any], nonce: int) -> str:
     """Compute SHA-256 of the block header with a given nonce.
 
     Matches Rust's serde_json::to_string field order:
@@ -33,7 +34,7 @@ def compute_pow_hash(header: dict, nonce: int) -> str:
     return hashlib.sha256(serialized.encode()).hexdigest()
 
 
-def mine(candidate: dict) -> tuple[int, str, float]:
+def mine(candidate: dict[str, Any]) -> tuple[int, str, float]:
     """Run the proof-of-work loop until a valid nonce is found.
 
     Args:
@@ -56,7 +57,7 @@ def mine(candidate: dict) -> tuple[int, str, float]:
         nonce += 1
 
 
-def fetch_candidate(node_url: str, public_key: str) -> dict:
+def fetch_candidate(node_url: str, public_key: str) -> dict[str, Any]:
     """Fetch a block candidate from the node.
 
     Args:
@@ -72,10 +73,13 @@ def fetch_candidate(node_url: str, public_key: str) -> dict:
     url = f"{node_url.rstrip('/')}/api/v1/mining/candidate"
     response = httpx.get(url, params={"miner": public_key}, timeout=10)
     response.raise_for_status()
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result
 
 
-def submit_block(node_url: str, candidate: dict, nonce: int) -> dict:
+def submit_block(
+    node_url: str, candidate: dict[str, Any], nonce: int
+) -> dict[str, Any]:
     """Submit a mined block to the node.
 
     Args:
@@ -100,4 +104,5 @@ def submit_block(node_url: str, candidate: dict, nonce: int) -> dict:
     url = f"{node_url.rstrip('/')}/api/v1/mining/submit"
     response = httpx.post(url, json=block, timeout=10)
     response.raise_for_status()
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result

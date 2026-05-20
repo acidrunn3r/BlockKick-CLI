@@ -1,13 +1,16 @@
 """Module for managing keystore files."""
 
-from rich.console import Console
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import default_backend
-import os
-import json
 import binascii
+import json
+import os
 from pathlib import Path
+from typing import Any
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from rich.console import Console
+
 from .keys import generate_ed25519_wallet
 
 console = Console()
@@ -27,7 +30,8 @@ def get_selected_wallet() -> str | None:
         return None
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return data.get("selected_wallet")
+        selected: str | None = data.get("selected_wallet")
+        return selected
     except Exception:
         return None
 
@@ -38,7 +42,7 @@ def set_selected_wallet(filename: str) -> None:
     Args:
         filename: Keystore filename (e.g. keystore-abc123.json).
     """
-    data: dict = {}
+    data: dict[str, Any] = {}
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -96,7 +100,8 @@ def get_node_url() -> str:
         return DEFAULT_NODE_URL
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return data.get("node_url", DEFAULT_NODE_URL)
+        url: str = data.get("node_url", DEFAULT_NODE_URL)
+        return url
     except Exception:
         return DEFAULT_NODE_URL
 
@@ -107,7 +112,7 @@ def set_node_url(url: str) -> None:
     Args:
         url: Base URL of the BlockKick node (e.g. http://localhost:8080).
     """
-    data: dict = {}
+    data: dict[str, Any] = {}
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -123,7 +128,8 @@ def get_api_url() -> str:
         return DEFAULT_API_URL
     try:
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return data.get("api_url", DEFAULT_API_URL)
+        url: str = data.get("api_url", DEFAULT_API_URL)
+        return url
     except Exception:
         return DEFAULT_API_URL
 
@@ -134,7 +140,7 @@ def set_api_url(url: str) -> None:
     Args:
         url: Base URL of the BlockKick API (e.g. http://localhost:8000).
     """
-    data: dict = {}
+    data: dict[str, Any] = {}
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -165,7 +171,8 @@ def get_api_access_token() -> str | None:
         return None
     try:
         data = json.loads(API_AUTH_FILE.read_text(encoding="utf-8"))
-        return data.get("access_token")
+        token: str | None = data.get("access_token")
+        return token
     except Exception:
         return None
 
@@ -189,7 +196,9 @@ def get_last_action(filename: str) -> int | None:
         return None
     try:
         data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
-        return data.get(filename, {}).get("last_action")
+        wallet_data: dict[str, Any] = data.get(filename, {})
+        last_action: int | None = wallet_data.get("last_action")
+        return last_action
     except Exception:
         return None
 
@@ -201,7 +210,8 @@ def update_last_action(filename: str) -> None:
         filename: Keystore filename.
     """
     import time
-    data: dict = {}
+
+    data: dict[str, Any] = {}
     if METADATA_FILE.exists():
         try:
             data = json.loads(METADATA_FILE.read_text(encoding="utf-8"))
@@ -213,7 +223,7 @@ def update_last_action(filename: str) -> None:
 
 def derive_key(password: str, salt: bytes) -> bytes:
     """Derive strong key from password using scrypt (memory-hard KDF).
-    
+
     Args:
         password (str): User-provided password.
         salt (bytes): Random salt.
@@ -221,20 +231,14 @@ def derive_key(password: str, salt: bytes) -> bytes:
     Returns:
         bytes: A 32-byte derived key suitable for AES-256-GCM.
     """
-    kdf = Scrypt(
-        salt=salt,
-        length=32,
-        n=2**14,
-        r=8,
-        p=1,
-        backend=default_backend()
-    )
-    return kdf.derive(password.encode("utf-8"))
+    kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1, backend=default_backend())
+    key: bytes = kdf.derive(password.encode("utf-8"))
+    return key
 
 
 def create_keystore(password: str) -> tuple[Path, str]:
     """Creates a new wallet, encrypts the private key, and saves it as a keystore file.
-    
+
     Args:
         password (str): The password to use for encrypting the private key.
 
@@ -266,9 +270,9 @@ def create_keystore(password: str) -> tuple[Path, str]:
                 "n": 16384,
                 "r": 8,
                 "p": 1,
-                "dklen": 32
-            }
-        }
+                "dklen": 32,
+            },
+        },
     }
 
     filename = f"keystore-{wallet['public_key_hex'][:16]}.json"
@@ -277,37 +281,37 @@ def create_keystore(password: str) -> tuple[Path, str]:
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(keystore_data, f, indent=2, ensure_ascii=False)
 
-    return filepath, wallet['public_key_hex']
+    return filepath, wallet["public_key_hex"]
 
 
 def decrypt_keystore(keystore: Path, password: str) -> bytes:
     """Decrypt keystore file and return private key.
-    
+
     Args:
         keystore: Path to keystore file.
         password: Password, used for creating the wallet.
-        
+
     Returns:
         bytes: Decrypted private key (raw bytes, not hex).
-        
+
     Raises:
         ValueError: If password is incorrect or keystore is invalid.
         FileNotFoundError: If keystore file does not exist.
     """
-    with open(keystore, "r", encoding="utf-8") as f:
+    with open(keystore, encoding="utf-8") as f:
         keystore_data = json.load(f)
-    
+
     crypto = keystore_data["crypto"]
     ciphertext = binascii.unhexlify(crypto["ciphertext"])
     nonce = binascii.unhexlify(crypto["nonce"])
     salt = binascii.unhexlify(crypto["kdfparams"]["salt"])
-    
+
     key = derive_key(password, salt)
-    
+
     aesgcm = AESGCM(key)
     try:
-        private_key_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+        private_key_bytes: bytes = aesgcm.decrypt(nonce, ciphertext, None)
     except Exception as e:
         raise ValueError("Invalid password") from e
-    
+
     return private_key_bytes

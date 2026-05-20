@@ -1,5 +1,7 @@
 """HTTP client for BlockKick API."""
 
+from typing import Any
+
 import httpx
 
 
@@ -22,10 +24,14 @@ def request_challenge(api_url: str, wallet_address: str) -> str:
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()["nonce"]
+    data: dict[str, Any] = response.json()
+    nonce: str = data["nonce"]
+    return nonce
 
 
-def auth_login(api_url: str, wallet_address: str, nonce: str, signature_hex: str) -> dict:
+def auth_login(
+    api_url: str, wallet_address: str, nonce: str, signature_hex: str
+) -> dict[str, Any]:
     """Submit signed nonce to authenticate and receive JWT tokens.
 
     Args:
@@ -50,10 +56,13 @@ def auth_login(api_url: str, wallet_address: str, nonce: str, signature_hex: str
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result
 
 
-def update_profile(api_url: str, access_token: str, display_name: str, bio: str = "") -> dict:
+def update_profile(
+    api_url: str, access_token: str, display_name: str, bio: str = ""
+) -> dict[str, Any]:
     """Update the authenticated user's display name and bio.
 
     Args:
@@ -79,10 +88,11 @@ def update_profile(api_url: str, access_token: str, display_name: str, bio: str 
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result
 
 
-def list_projects(api_url: str) -> list:
+def list_projects(api_url: str) -> list[Any]:
     """Fetch all crowdfunding projects.
 
     Args:
@@ -99,10 +109,11 @@ def list_projects(api_url: str) -> list:
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()
+    result: list[Any] = response.json()
+    return result
 
 
-def get_profile(api_url: str, access_token: str) -> dict:
+def get_profile(api_url: str, access_token: str) -> dict[str, Any]:
     """Fetch the authenticated user's profile.
 
     Args:
@@ -121,4 +132,5 @@ def get_profile(api_url: str, access_token: str) -> dict:
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()
+    result: dict[str, Any] = response.json()
+    return result

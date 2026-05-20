@@ -1,36 +1,43 @@
 """BlockKick CLI - command line interface for wallet management."""
 
-import typer
-import json
+import binascii
 import datetime
+import json
 from getpass import getpass
+from pathlib import Path
+
+import httpx
+import typer
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from rich.console import Console
 from rich.table import Table
 
-from .wallet.keystore import (
-    create_keystore,
-    KEYSTORE_DIR,
-    decrypt_keystore,
-    get_selected_wallet,
-    set_selected_wallet,
-    save_session,
-    clear_session,
-    get_last_action,
-    update_last_action,
-    get_node_url,
-    set_node_url,
-    get_api_url,
-    set_api_url,
-    save_api_tokens,
-    get_api_access_token,
-    clear_api_tokens,
-    get_session_private_key,
+from .api.client import (
+    auth_login,
+    get_profile,
+    list_projects,
+    request_challenge,
+    update_profile,
 )
 from .blockchain.mining import fetch_candidate, mine, submit_block
-from .api.client import request_challenge, auth_login, update_profile, get_profile, list_projects
-import httpx
-import binascii
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from .wallet.keystore import (
+    KEYSTORE_DIR,
+    clear_session,
+    create_keystore,
+    decrypt_keystore,
+    get_api_access_token,
+    get_api_url,
+    get_last_action,
+    get_node_url,
+    get_selected_wallet,
+    get_session_private_key,
+    save_api_tokens,
+    save_session,
+    set_api_url,
+    set_node_url,
+    set_selected_wallet,
+    update_last_action,
+)
 
 console = Console()
 
@@ -39,16 +46,16 @@ app = typer.Typer(
     help="BlockKick CLI — local wallet for BlockKick blockchain",
     rich_markup_mode="rich",
     no_args_is_help=True,
-    context_settings={
-        "help_option_names": ["-h", "--help"]
-    },
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
+
 # ==== GENERAL COMMANDS ====
-def _version_callback(value: bool):
+def _version_callback(value: bool) -> None:
     """Callback for --version flag."""
     if value:
         from importlib.metadata import version
+
         try:
             pkg_version = version("blockkick")
         except Exception:
@@ -56,28 +63,32 @@ def _version_callback(value: bool):
         typer.echo(f"BlockKick CLI v{pkg_version}")
         raise typer.Exit()
 
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(
         False,
-        "--version", "-v",
+        "--version",
+        "-v",
         help="Show version and exit",
         is_eager=True,
         callback=_version_callback,
     ),
-):
+) -> None:
     """BlockKick CLI — local wallet for BlockKick blockchain."""
     pass
+
 
 # ==== CONFIG COMMANDS ====
 config_app = typer.Typer(help="Configuration commands (node URL, etc.)")
 app.add_typer(config_app, name="config")
 
+
 @config_app.command("set-node")
 def config_set_node(
     url: str = typer.Argument(..., help="Node URL (e.g. http://localhost:3000)")
-):
+) -> None:
     """
     Set the default node URL for all commands (mine, balance, etc.).
 
@@ -86,10 +97,11 @@ def config_set_node(
     set_node_url(url)
     console.print(f"[green]Node URL set to:[/green] [bold]{url}[/bold]")
 
+
 @config_app.command("set-api")
 def config_set_api(
     url: str = typer.Argument(..., help="API URL (e.g. http://localhost:8000)")
-):
+) -> None:
     """
     Set the default BlockKick API URL for register, login, etc.
 
@@ -98,8 +110,9 @@ def config_set_api(
     set_api_url(url)
     console.print(f"[green]API URL set to:[/green] [bold]{url}[/bold]")
 
+
 @config_app.command("show")
-def config_show():
+def config_show() -> None:
     """
     Show current configuration.
     """
@@ -118,18 +131,21 @@ def config_show():
 wallet_app = typer.Typer(help="Wallet management commands (create, list, info)")
 app.add_typer(wallet_app, name="wallet")
 
+
 @wallet_app.command("create")
 def wallet_create(
     password: str = typer.Option(
-        None, "--password", "-p",
+        None,
+        "--password",
+        "-p",
         hide_input=True,
         confirmation_prompt=True,
-        help="Wallet password. Used for encrypting and decrypting keystore"
+        help="Wallet password. Used for encrypting and decrypting keystore",
     )
-):
+) -> None:
     """
     Create a new Ed25519 wallet and save it as encrypted keystore.
-    
+
     The private key is encrypted using scrypt + AES-256-GCM.
     """
     try:
@@ -146,44 +162,45 @@ def wallet_create(
                     continue
                 password = pwd
                 break
-        
+
         keystore_path, public_key = create_keystore(password=password)
         update_last_action(keystore_path.name)
 
-        console.print(f"\n[green]Wallet successfully created and encrypted![/green]")
+        console.print("\n[green]Wallet successfully created and encrypted![/green]")
         console.print(f"Public key: {public_key}")
         console.print(f"File path: [bold]{keystore_path}[/bold]")
-        console.print(f"Remember your password! It will be used to access your wallet.")
-        console.print(f"[red]Do not give this file or password to anyone![/red]")
+        console.print("Remember your password! It will be used to access your wallet.")
+        console.print("[red]Do not give this file or password to anyone![/red]")
 
     except Exception as e:
         console.print(f"[red]Error when creating wallet: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
+
 
 @wallet_app.command("list")
-def wallet_list():
+def wallet_list() -> None:
     """
     List all local keystores found in ~/.blockkick/keystores/.
-    
+
     Shows public key (short), timestamp and file path.
     """
     keystores = list(KEYSTORE_DIR.glob("keystore-*.json"))
-    
+
     if not keystores:
         console.print(
-            "No wallets found. " 
+            "No wallets found. "
             "Create your first wallet: [yellow]blockkick wallet create[/yellow]"
         )
         return
-    
+
     selected = get_selected_wallet()
 
-    def sort_key(path):
+    def sort_key(path: Path) -> int:
         last = get_last_action(path.name)
         if last is not None:
             return last
         try:
-            return json.loads(path.read_text(encoding="utf-8"))["timestamp"]
+            return int(json.loads(path.read_text(encoding="utf-8"))["timestamp"])
         except Exception:
             return 0
 
@@ -208,31 +225,31 @@ def wallet_list():
 
         active = "*" if path.name == selected else ""
         table.add_row(str(idx), pub_short, ts, path.name, active)
-    
+
     console.print(table)
     console.print(f"[dim]Storage path: {KEYSTORE_DIR}[/dim]")
+
 
 @wallet_app.command("info")
 def wallet_info(
     filename: str = typer.Argument(
-        ...,
-        help="Keystore file name (e.g. keystore-abc123.json)"
+        ..., help="Keystore file name (e.g. keystore-abc123.json)"
     )
-):
+) -> None:
     """
     Show details of a specific keystore file.
-    
+
     Displays public key, creation timestamp, encryption params (without private key!).
     """
     filepath = KEYSTORE_DIR / filename
-    
+
     if not filepath.exists():
         console.print(f"[red]File not found: [/red]{filepath}")
         raise typer.Exit(1)
-    
+
     try:
         data = json.loads(filepath.read_text(encoding="utf-8"))
-        
+
         console.print(f"[bold]Wallet info: {filename}[/bold]")
         console.print(f"Public key [bold]{data['public_key_hex']}[/bold]")
         console.print(
@@ -247,23 +264,24 @@ def wallet_info(
             f"p={data['crypto']['kdfparams']['p']})"
         )
         console.print(f"Version: {data['version']}")
-        
+
     except json.JSONDecodeError:
-        console.print(f"[red]Error reading JSON[/red]")
-        raise typer.Exit(1)
+        console.print("[red]Error reading JSON[/red]")
+        raise typer.Exit(1) from None
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
+
 
 @wallet_app.command("select")
 def wallet_select(
-    filename: str = typer.Argument(..., help="Keystore file name (e.g. keystore-abc123.json)"),
-    password: str = typer.Option(
-        None, "--password", "-p",
-        hide_input=True,
-        help="Wallet password"
+    filename: str = typer.Argument(
+        ..., help="Keystore file name (e.g. keystore-abc123.json)"
     ),
-):
+    password: str = typer.Option(
+        None, "--password", "-p", hide_input=True, help="Wallet password"
+    ),
+) -> None:
     """
     Select a wallet as the active one for future commands (mine, login, etc.).
 
@@ -286,10 +304,10 @@ def wallet_select(
         public_key = data["public_key_hex"]
     except ValueError as e:
         console.print(f"[red]Decryption error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     set_selected_wallet(filename)
     save_session(filename, private_key_bytes)
@@ -297,11 +315,13 @@ def wallet_select(
 
     console.print(f"[green]Active wallet set to:[/green] [bold]{filename}[/bold]")
     console.print(f"Public key: [bold]{public_key}[/bold]")
-    console.print(f"[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]")
+    console.print(
+        "[dim]This wallet will be used by blockkick mine, blockkick login, etc.[/dim]"
+    )
 
 
 @wallet_app.command("deselect")
-def wallet_deselect():
+def wallet_deselect() -> None:
     """
     Deselect the active wallet and clear the session.
     """
@@ -319,13 +339,13 @@ def wallet_deselect():
 
 # ==== BALANCE COMMAND ====
 
+
 @app.command("balance")
 def balance_cmd(
     node: str = typer.Option(
-        None, "--node", "-n",
-        help="Node URL. Defaults to saved config."
+        None, "--node", "-n", help="Node URL. Defaults to saved config."
     ),
-):
+) -> None:
     """
     Show the coin balance of the currently selected wallet.
     """
@@ -341,7 +361,7 @@ def balance_cmd(
         public_key = data["public_key_hex"]
     except Exception as e:
         console.print(f"[red]Error reading wallet:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     node_url = node or get_node_url()
 
@@ -354,7 +374,7 @@ def balance_cmd(
         balance = response.json()["balance"]
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach node:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     console.print(f"Wallet:  [bold]{selected}[/bold]")
     console.print(f"Balance: [bold green]{balance} coins[/bold green]")
@@ -362,13 +382,16 @@ def balance_cmd(
 
 # ==== MINE COMMAND ====
 
+
 @app.command("mine")
 def mine_cmd(
     node: str = typer.Option(
-        None, "--node", "-n",
-        help="Node URL (e.g. http://localhost:8080). Defaults to saved config."
+        None,
+        "--node",
+        "-n",
+        help="Node URL (e.g. http://localhost:8080). Defaults to saved config.",
     ),
-):
+) -> None:
     """
     Mine a block on the BlockKick blockchain.
 
@@ -392,7 +415,7 @@ def mine_cmd(
         public_key = data["public_key_hex"]
     except Exception as e:
         console.print(f"[red]Error reading wallet:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     # Resolve node URL
     node_url = node or get_node_url()
@@ -407,14 +430,18 @@ def mine_cmd(
         candidate = fetch_candidate(node_url, public_key)
     except Exception as e:
         console.print(f"[red]Failed to reach node:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     difficulty = candidate["difficulty"]
     reward = candidate["reward"]
     block_index = candidate["block_template"]["index"]
 
-    console.print(f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins")
-    console.print(f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n")
+    console.print(
+        f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins"
+    )
+    console.print(
+        f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n"
+    )
 
     # Run PoW
     try:
@@ -422,9 +449,9 @@ def mine_cmd(
             nonce, block_hash, elapsed = mine(candidate)
     except KeyboardInterrupt:
         console.print("\n[red]Mining cancelled.[/red]")
-        raise typer.Exit(0)
+        raise typer.Exit(0) from None
 
-    console.print(f"[green]Block found![/green]")
+    console.print("[green]Block found![/green]")
     console.print(f"Nonce:   [bold]{nonce}[/bold]")
     console.print(f"Hash:    [bold]{block_hash}[/bold]")
     console.print(f"Time:    [bold]{elapsed:.2f}s[/bold]")
@@ -435,12 +462,14 @@ def mine_cmd(
         result = submit_block(node_url, candidate, nonce)
     except Exception as e:
         console.print(f"[red]Submission failed:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     update_last_action(wallet_file)
 
-    console.print(f"\n[green bold]Block accepted![/green bold]")
-    console.print(f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}...")
+    console.print("\n[green bold]Block accepted![/green bold]")
+    console.print(
+        f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}..."
+    )
 
 
 def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
@@ -457,7 +486,9 @@ def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
     session_filename, private_key_bytes = get_session_private_key()
 
     if session_filename and private_key_bytes:
-        data = _json.loads((KEYSTORE_DIR / session_filename).read_text(encoding="utf-8"))
+        data = _json.loads(
+            (KEYSTORE_DIR / session_filename).read_text(encoding="utf-8")
+        )
         return session_filename, private_key_bytes, data["public_key_hex"]
 
     selected = get_selected_wallet()
@@ -469,13 +500,14 @@ def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
     filepath = KEYSTORE_DIR / selected
     if password is None:
         from getpass import getpass as _getpass
+
         password = _getpass("Enter wallet password: ")
 
     try:
         private_key_bytes = decrypt_keystore(filepath, password)
     except ValueError as e:
         console.print(f"[red]Decryption error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     data = _json.loads(filepath.read_text(encoding="utf-8"))
     return selected, private_key_bytes, data["public_key_hex"]
@@ -483,26 +515,24 @@ def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
 
 # ==== AUTH COMMANDS ====
 
+
 @app.command("register")
 def register_cmd(
     name: str = typer.Option(
-        None, "--name",
-        help="Display name to set on your profile after registering."
+        None, "--name", help="Display name to set on your profile after registering."
     ),
     bio: str = typer.Option(
-        "", "--bio",
-        help="Short bio to set on your profile after registering."
+        "", "--bio", help="Short bio to set on your profile after registering."
     ),
-    api: str = typer.Option(
-        None, "--api",
-        help="API URL. Defaults to saved config."
-    ),
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
     password: str = typer.Option(
-        None, "--password", "-p",
+        None,
+        "--password",
+        "-p",
         hide_input=True,
-        help="Wallet password (if no active session)."
+        help="Wallet password (if no active session).",
     ),
-):
+) -> None:
     """
     Register your wallet with the BlockKick API.
 
@@ -521,20 +551,22 @@ def register_cmd(
         nonce = request_challenge(api_url, public_key)
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     private_key_obj = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
-    signature_hex = binascii.hexlify(private_key_obj.sign(nonce.encode("utf-8"))).decode()
+    signature_hex = binascii.hexlify(
+        private_key_obj.sign(nonce.encode("utf-8"))
+    ).decode()
 
     try:
         console.print("[dim]Submitting signature...[/dim]")
         tokens = auth_login(api_url, public_key, nonce, signature_hex)
     except httpx.HTTPStatusError as e:
         console.print(f"[red]Authentication failed:[/red] {e.response.text}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     save_api_tokens(tokens["access_token"], tokens["refresh_token"])
 
@@ -545,25 +577,24 @@ def register_cmd(
         except httpx.HTTPError as e:
             console.print(f"[yellow]Warning: profile update failed:[/yellow] {e}")
 
-    console.print(f"\n[green bold]Registered![/green bold]")
+    console.print("\n[green bold]Registered![/green bold]")
     console.print(f"Wallet: [bold]{public_key[:16]}...[/bold]")
     if name:
         console.print(f"Name:   [bold]{name}[/bold]")
-    console.print(f"[dim]Token saved. Use blockkick login to refresh.[/dim]")
+    console.print("[dim]Token saved. Use blockkick login to refresh.[/dim]")
 
 
 @app.command("login")
 def login_cmd(
-    api: str = typer.Option(
-        None, "--api",
-        help="API URL. Defaults to saved config."
-    ),
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
     password: str = typer.Option(
-        None, "--password", "-p",
+        None,
+        "--password",
+        "-p",
         hide_input=True,
-        help="Wallet password (if no active session)."
+        help="Wallet password (if no active session).",
     ),
-):
+) -> None:
     """
     Log in to the BlockKick API with your active wallet.
 
@@ -581,20 +612,22 @@ def login_cmd(
         nonce = request_challenge(api_url, public_key)
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     private_key_obj = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
-    signature_hex = binascii.hexlify(private_key_obj.sign(nonce.encode("utf-8"))).decode()
+    signature_hex = binascii.hexlify(
+        private_key_obj.sign(nonce.encode("utf-8"))
+    ).decode()
 
     try:
         console.print("[dim]Submitting signature...[/dim]")
         tokens = auth_login(api_url, public_key, nonce, signature_hex)
     except httpx.HTTPStatusError as e:
         console.print(f"[red]Authentication failed:[/red] {e.response.text}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     save_api_tokens(tokens["access_token"], tokens["refresh_token"])
 
@@ -604,7 +637,7 @@ def login_cmd(
     except httpx.HTTPError:
         display = public_key[:16] + "..."
 
-    console.print(f"\n[green bold]Logged in![/green bold]")
+    console.print("\n[green bold]Logged in![/green bold]")
     console.print(f"Account: [bold]{display}[/bold]")
     console.print(f"Wallet:  [bold]{public_key[:16]}...[/bold]")
 
@@ -628,11 +661,8 @@ app.add_typer(profile_app, name="profile")
 
 @profile_app.command("show")
 def profile_show(
-    api: str = typer.Option(
-        None, "--api",
-        help="API URL. Defaults to saved config."
-    ),
-):
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
+) -> None:
     """
     Show your BlockKick API profile.
 
@@ -648,10 +678,10 @@ def profile_show(
             console.print("[dim]Run: blockkick login[/dim]")
         else:
             console.print(f"[red]API error:[/red] {e.response.text}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     console.print(f"Wallet:  [bold]{data['wallet_address']}[/bold]")
     console.print(f"Name:    [bold]{data.get('display_name') or '—'}[/bold]")
@@ -661,18 +691,11 @@ def profile_show(
 @profile_app.command("update")
 def profile_update(
     name: str = typer.Option(
-        ..., "--name",
-        help="New display name (max 100 characters)."
+        ..., "--name", help="New display name (max 100 characters)."
     ),
-    bio: str = typer.Option(
-        "", "--bio",
-        help="Short bio."
-    ),
-    api: str = typer.Option(
-        None, "--api",
-        help="API URL. Defaults to saved config."
-    ),
-):
+    bio: str = typer.Option("", "--bio", help="Short bio."),
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
+) -> None:
     """
     Update your BlockKick API profile.
 
@@ -688,12 +711,12 @@ def profile_update(
             console.print("[dim]Run: blockkick login[/dim]")
         else:
             console.print(f"[red]API error:[/red] {e.response.text}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
-    console.print(f"[green]Profile updated![/green]")
+    console.print("[green]Profile updated![/green]")
     console.print(f"Name: [bold]{data.get('display_name')}[/bold]")
     if data.get("bio"):
         console.print(f"Bio:  [bold]{data['bio']}[/bold]")
@@ -701,13 +724,11 @@ def profile_update(
 
 # ==== PROJECTS COMMAND ====
 
+
 @app.command("projects")
 def projects_cmd(
-    api: str = typer.Option(
-        None, "--api",
-        help="API URL. Defaults to saved config."
-    ),
-):
+    api: str = typer.Option(None, "--api", help="API URL. Defaults to saved config."),
+) -> None:
     """
     List all crowdfunding projects on BlockKick.
     """
@@ -717,7 +738,7 @@ def projects_cmd(
         projects = list_projects(api_url)
     except httpx.HTTPError as e:
         console.print(f"[red]Failed to reach API:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     if not projects:
         console.print("No projects found yet.")
