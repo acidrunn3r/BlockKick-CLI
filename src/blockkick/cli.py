@@ -14,12 +14,20 @@ from rich.table import Table
 
 from .api.client import (
     auth_login,
+    get_balance,
     get_profile,
     list_projects,
     request_challenge,
+    submit_transaction,
     update_profile,
 )
 from .blockchain.mining import fetch_candidate, mine, submit_block
+from .blockchain.transactions import (
+    build_create_project_tx,
+    build_fund_project_tx,
+    get_signing_data,
+)
+from .blockchain.tx import sign_transaction
 from .wallet.keystore import (
     KEYSTORE_DIR,
     clear_session,
@@ -720,6 +728,168 @@ def profile_update(
     console.print(f"Name: [bold]{data.get('display_name')}[/bold]")
     if data.get("bio"):
         console.print(f"Bio:  [bold]{data['bio']}[/bold]")
+
+
+# ==== PROJECT COMMANDS ====
+
+project_app = typer.Typer(help="Crowdfunding project commands (create, donate).")
+app.add_typer(project_app, name="project")
+
+
+@project_app.command("create")
+def project_create(
+    node: str = typer.Option(
+        None, "--node", "-n", help="Node URL. Defaults to saved config."
+    ),
+    password: str = typer.Option(
+        None,
+        "--password",
+        "-p",
+        hide_input=True,
+        help="Wallet password (if no active session).",
+    ),
+) -> None:
+    """
+    Create a new crowdfunding project on the BlockKick blockchain.
+
+    Interactively prompts for project name, description, goal amount and
+    deadline, then broadcasts a signed CreateProject transaction to the node.
+    """
+    wallet_file, private_key_bytes, public_key = _resolve_private_key(password)
+    node_url = node or get_node_url()
+
+    console.print("[bold]New project[/bold]")
+    name = typer.prompt("Enter project name")
+    description = typer.prompt("Enter project description")
+
+    while True:
+        try:
+            goal = int(typer.prompt("Enter goal amount (coins)"))
+            if goal < 1:
+                console.print("[red]Goal must be at least 1 coin.[/red]")
+                continue
+            break
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
+
+    while True:
+        try:
+            days = int(typer.prompt("Enter deadline (days from now)", default="30"))
+            if days < 1:
+                console.print("[red]Deadline must be at least 1 day.[/red]")
+                continue
+            break
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
+
+    import time as _time
+
+    deadline_ts = int(_time.time()) + days * 86400
+
+    tx = build_create_project_tx(public_key, name, description, goal, deadline_ts)
+    signing_data = get_signing_data(tx)
+    signature = sign_transaction(signing_data, private_key_bytes)
+    tx["signature"] = signature
+
+    try:
+        console.print("\n[dim]Submitting transaction...[/dim]")
+        result = submit_transaction(node_url, tx)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Node rejected transaction:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    update_last_action(wallet_file)
+
+    project_id = tx["data"]["project_id"]
+    status = result.get("status", "unknown")
+
+    console.print("\n[green bold]Project created![/green bold]")
+    console.print(f"Project ID: [bold]{project_id}[/bold]")
+    console.print(f"Name:       [bold]{name}[/bold]")
+    console.print(f"Goal:       [bold]{goal} coins[/bold]")
+    console.print(f"TX status:  [bold]{status}[/bold]")
+    console.print(f"[dim]TX ID: {tx['id']}[/dim]")
+
+
+@project_app.command("donate")
+def project_donate(
+    project_id: str = typer.Argument(
+        ...,
+        help="Project ID (e.g. proj_abc1234...). Use 'blockkick projects' to list them.",
+    ),
+    node: str = typer.Option(
+        None, "--node", "-n", help="Node URL. Defaults to saved config."
+    ),
+    password: str = typer.Option(
+        None,
+        "--password",
+        "-p",
+        hide_input=True,
+        help="Wallet password (if no active session).",
+    ),
+) -> None:
+    """
+    Donate coins to a crowdfunding project.
+
+    Checks your wallet balance before broadcasting a signed FundProject
+    transaction to the node.
+    """
+    wallet_file, private_key_bytes, public_key = _resolve_private_key(password)
+    node_url = node or get_node_url()
+
+    while True:
+        try:
+            amount = int(typer.prompt("Enter amount of coins"))
+            if amount < 1:
+                console.print("[red]Amount must be at least 1 coin.[/red]")
+                continue
+            break
+        except ValueError:
+            console.print("[red]Please enter a valid number.[/red]")
+
+    creator_wallet = typer.prompt("Enter creator wallet address")
+    note = typer.prompt("Enter backer note (leave empty to skip)", default="")
+
+    try:
+        balance = get_balance(node_url, public_key)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    if balance < amount:
+        console.print(
+            f"[red]Insufficient balance.[/red] "
+            f"You have [bold]{balance} coins[/bold] but the donation requires [bold]{amount} coins[/bold]."
+        )
+        raise typer.Exit(1)
+
+    tx = build_fund_project_tx(public_key, creator_wallet, project_id, amount, note)
+    signing_data = get_signing_data(tx)
+    signature = sign_transaction(signing_data, private_key_bytes)
+    tx["signature"] = signature
+
+    try:
+        console.print("\n[dim]Submitting transaction...[/dim]")
+        result = submit_transaction(node_url, tx)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Node rejected transaction:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    update_last_action(wallet_file)
+
+    status = result.get("status", "unknown")
+
+    console.print("\n[green bold]Donation sent![/green bold]")
+    console.print(f"Project:   [bold]{project_id}[/bold]")
+    console.print(f"Amount:    [bold]{amount} coins[/bold]")
+    console.print(f"TX status: [bold]{status}[/bold]")
+    console.print(f"[dim]TX ID: {tx['id']}[/dim]")
 
 
 # ==== PROJECTS COMMAND ====
