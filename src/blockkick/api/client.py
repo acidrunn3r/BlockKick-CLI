@@ -1,5 +1,6 @@
 """HTTP client for BlockKick API."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -110,6 +111,52 @@ def list_projects(api_url: str) -> list[Any]:
     )
     response.raise_for_status()
     result: list[Any] = response.json()
+    return result
+
+
+def get_balance(node_url: str, public_key: str) -> int:
+    """Fetch the coin balance of a wallet from the node.
+
+    Args:
+        node_url: Base URL of the BlockKick node.
+        public_key: Hex-encoded Ed25519 public key (64 chars).
+
+    Returns:
+        int: Current coin balance.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors.
+    """
+    response = httpx.get(
+        f"{node_url.rstrip('/')}/api/v1/balance/{public_key}",
+        timeout=10,
+    )
+    response.raise_for_status()
+    result: int = response.json()["balance"]
+    return result
+
+
+def submit_transaction(node_url: str, tx: Mapping[str, Any]) -> dict[str, Any]:
+    """Submit a signed transaction to the node.
+
+    Args:
+        node_url: Base URL of the BlockKick node.
+        tx: Signed transaction dict with id, tx_type, from, to, data,
+            timestamp and signature fields.
+
+    Returns:
+        dict: Response with ``tx_id`` and ``status``.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors.
+    """
+    response = httpx.post(
+        f"{node_url.rstrip('/')}/api/v1/transactions",
+        json=tx,
+        timeout=10,
+    )
+    response.raise_for_status()
+    result: dict[str, Any] = response.json()
     return result
 
 

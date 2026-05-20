@@ -1,6 +1,6 @@
 [project]
 name = "blockkick"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local wallet for BlockKick blockhain"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -95,3 +95,7 @@ mypy_path = ["src"]
 [[tool.mypy.overrides]]
 module = ["blockkick.cli"]
 disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
