@@ -103,6 +103,43 @@ def build_create_project_tx(
     return tx
 
 
+def build_transfer_tx(
+    sender_public_key: str,
+    recipient_public_key: str,
+    amount: int,
+    message: str = "",
+) -> Transaction:
+    """Build a Transfer transaction.
+
+    The returned transaction has its ``id`` field populated but ``signature``
+    set to ``None``.  Call ``get_signing_data(tx)`` to obtain the payload to
+    sign, then store the result in ``tx["signature"]`` before submitting.
+
+    Args:
+        sender_public_key: Hex-encoded Ed25519 public key of the sender.
+        recipient_public_key: Hex-encoded Ed25519 public key of the recipient.
+        amount: Amount in coins to transfer (≥ 1).
+        message: Optional note attached to the transfer.
+
+    Returns:
+        Unsigned Transaction dict.
+    """
+    tx: Transaction = {
+        "id": "",
+        "tx_type": "Transfer",
+        "from": sender_public_key,
+        "to": recipient_public_key,
+        "data": {
+            "amount": amount,
+            "message": message,
+        },
+        "timestamp": int(time.time()),
+        "signature": None,
+    }
+    tx["id"] = compute_tx_id(tx)
+    return tx
+
+
 def build_fund_project_tx(
     sender_public_key: str,
     creator_public_key: str,
