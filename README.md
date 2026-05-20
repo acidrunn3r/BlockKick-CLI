@@ -86,12 +86,26 @@ make format  # автоисправление
 
 ### `blockkick mine`
 Добыть блок на BlockKick блокчейне (Proof-of-Work).
+- `--watch` — добывать блоки в цикле до Ctrl+C
+
+### `blockkick transfer <address> <amount>`
+Перевести монеты на другой кошелёк.
+- `--message` — необязательная заметка к переводу
+
+### `blockkick tx <tx_id>`
+Проверить статус транзакции по ID.
+
+### `blockkick history`
+Показать историю транзакций активного кошелька: переводы, донаты, награды за майнинг.
 
 ### `blockkick register`
 Зарегистрировать кошелёк в BlockKick API через криптографический challenge-response.
 
 ### `blockkick login`
 Войти в BlockKick API и сохранить JWT-токен локально.
+
+### `blockkick logout`
+Выйти из BlockKick API и удалить сохранённые токены.
 
 ### `blockkick profile`
 Управление профилем в BlockKick API.
@@ -100,3 +114,9 @@ make format  # автоисправление
 
 ### `blockkick projects`
 Показать список краудфандинговых проектов на BlockKick.
+
+### `blockkick project`
+Управление краудфандинговыми проектами.
+- `create` — создать новый проект
+- `donate <project_id>` — отправить донат на проект
+- `status <project_id>` — детальная информация о проекте: цель, собрано, последние донаторы
