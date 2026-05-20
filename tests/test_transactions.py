@@ -50,12 +50,12 @@ class TestBuildCreateProjectTx:
 class TestBuildTransferTx:
 
     def test_fields(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100, "payment")
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
         assert tx["tx_type"] == "Transfer"
         assert tx["from"] == SENDER
         assert tx["to"] == RECIPIENT
         assert tx["data"]["amount"] == 100
-        assert tx["data"]["memo"] == "payment"
+        assert tx["data"]["message"] == ""
 
 
 class TestBuildFundProjectTx:

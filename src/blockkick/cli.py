@@ -965,8 +965,8 @@ def projects_cmd(
 def transfer_cmd(
     address: str = typer.Argument(..., help="Recipient wallet address (64-char hex)."),
     amount: int = typer.Argument(..., help="Amount of coins to send (≥ 1)."),
-    memo: str = typer.Option(
-        "", "--memo", "-m", help="Optional memo attached to the transfer."
+    message: str = typer.Option(
+        "", "--message", "-m", help="Optional note attached to the transfer."
     ),
     node: str = typer.Option(
         None, "--node", "-n", help="Node URL. Defaults to saved config."
@@ -1005,7 +1005,7 @@ def transfer_cmd(
         )
         raise typer.Exit(1)
 
-    tx = build_transfer_tx(public_key, address, amount, memo)
+    tx = build_transfer_tx(public_key, address, amount, message)
     signing_data = get_signing_data(tx)
     signature = sign_transaction(signing_data, private_key_bytes)
     tx["signature"] = signature

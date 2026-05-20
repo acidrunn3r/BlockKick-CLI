@@ -107,7 +107,7 @@ def build_transfer_tx(
     sender_public_key: str,
     recipient_public_key: str,
     amount: int,
-    memo: str = "",
+    message: str = "",
 ) -> Transaction:
     """Build a Transfer transaction.
 
@@ -119,7 +119,7 @@ def build_transfer_tx(
         sender_public_key: Hex-encoded Ed25519 public key of the sender.
         recipient_public_key: Hex-encoded Ed25519 public key of the recipient.
         amount: Amount in coins to transfer (≥ 1).
-        memo: Optional memo string attached to the transfer.
+        message: Optional note attached to the transfer.
 
     Returns:
         Unsigned Transaction dict.
@@ -131,7 +131,7 @@ def build_transfer_tx(
         "to": recipient_public_key,
         "data": {
             "amount": amount,
-            "memo": memo,
+            "message": message,
         },
         "timestamp": int(time.time()),
         "signature": None,
