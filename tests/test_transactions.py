@@ -6,12 +6,14 @@ import time
 from blockkick.blockchain.transactions import (
     build_create_project_tx,
     build_fund_project_tx,
+    build_transfer_tx,
     compute_tx_id,
     get_signing_data,
 )
 
 CREATOR = "a" * 64
 SENDER = "b" * 64
+RECIPIENT = "c" * 64
 PROJECT_ID = "proj_1234567890abcdef"
 
 
@@ -130,6 +132,54 @@ class TestBuildCreateProjectTx:
         tx = build_create_project_tx(CREATOR, "Name", "Desc", 100, 9999999999)
         after = int(time.time())
         assert before <= tx["timestamp"] <= after
+
+
+# ==== build_transfer_tx ====
+
+
+class TestBuildTransferTx:
+
+    def test_tx_type(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["tx_type"] == "Transfer"
+
+    def test_from_is_sender(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["from"] == SENDER
+
+    def test_to_is_recipient(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["to"] == RECIPIENT
+
+    def test_data_amount(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 250)
+        assert tx["data"]["amount"] == 250
+
+    def test_data_memo_defaults_to_empty(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["data"]["memo"] == ""
+
+    def test_data_memo_custom(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100, "payment")
+        assert tx["data"]["memo"] == "payment"
+
+    def test_id_field_is_populated(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert len(tx["id"]) == 64
+
+    def test_signature_is_none(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["signature"] is None
+
+    def test_timestamp_is_recent(self):
+        before = int(time.time())
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        after = int(time.time())
+        assert before <= tx["timestamp"] <= after
+
+    def test_id_matches_compute_result(self):
+        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
+        assert tx["id"] == compute_tx_id(tx)
 
 
 # ==== build_fund_project_tx ====

@@ -23,6 +23,7 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(ks, "CONFIG_FILE", tmp_path / "config.json")
     monkeypatch.setattr(ks, "SESSION_FILE", tmp_path / "session.json")
     monkeypatch.setattr(ks, "METADATA_FILE", tmp_path / "metadata.json")
+    monkeypatch.setattr(ks, "API_AUTH_FILE", tmp_path / "api_auth.json")
     # cli.py imports KEYSTORE_DIR by value, so patch it there too
     monkeypatch.setattr(cli, "KEYSTORE_DIR", keystore_dir)
 
@@ -549,3 +550,228 @@ class TestProjectDonate:
         )
         assert captured["tx"].get("signature") is not None
         assert len(captured["tx"]["signature"]) == 128
+
+
+# ==== transfer ====
+
+
+class TestTransfer:
+
+    RECIPIENT = "c" * 64
+
+    def test_sends_successfully(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        monkeypatch.setattr(
+            cli_module,
+            "submit_transaction",
+            lambda *a, **kw: {"status": "pending", "tx_id": "abc123"},
+        )
+        _create_and_select_wallet()
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "50"])
+        assert result.exit_code == 0
+        assert "Transfer sent!" in result.output
+
+    def test_shows_amount_and_recipient(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        monkeypatch.setattr(
+            cli_module,
+            "submit_transaction",
+            lambda *a, **kw: {"status": "pending", "tx_id": "abc123"},
+        )
+        _create_and_select_wallet()
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "75"])
+        assert "75 coins" in result.output
+        assert self.RECIPIENT[:16] in result.output
+
+    def test_insufficient_balance_exits_with_error(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 10)
+        _create_and_select_wallet()
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "100"])
+        assert result.exit_code != 0
+        assert "Insufficient balance" in result.output
+
+    def test_requires_wallet_selection(self, isolated_paths):
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "50"])
+        assert result.exit_code != 0
+        assert "No wallet selected" in result.output
+
+    def test_zero_amount_exits_with_error(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        _create_and_select_wallet()
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "0"])
+        assert result.exit_code != 0
+
+    def test_transaction_fields_are_correct(self, isolated_paths, monkeypatch):
+        import json as _json
+
+        import blockkick.cli as cli_module
+        import blockkick.wallet.keystore as ks
+
+        captured = {}
+
+        def capture(node_url, tx):
+            captured["tx"] = tx
+            return {"status": "pending", "tx_id": "abc123"}
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        monkeypatch.setattr(cli_module, "submit_transaction", capture)
+        filename = _create_and_select_wallet()
+        public_key = _json.loads((ks.KEYSTORE_DIR / filename).read_text())[
+            "public_key_hex"
+        ]
+
+        runner.invoke(app, ["transfer", self.RECIPIENT, "42", "--memo", "test payment"])
+        tx = captured["tx"]
+        assert tx["tx_type"] == "Transfer"
+        assert tx["from"] == public_key
+        assert tx["to"] == self.RECIPIENT
+        assert tx["data"]["amount"] == 42
+        assert tx["data"]["memo"] == "test payment"
+
+    def test_transaction_is_signed(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        captured = {}
+
+        def capture(node_url, tx):
+            captured["tx"] = tx
+            return {"status": "pending", "tx_id": "abc123"}
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        monkeypatch.setattr(cli_module, "submit_transaction", capture)
+        _create_and_select_wallet()
+        runner.invoke(app, ["transfer", self.RECIPIENT, "10"])
+        assert captured["tx"].get("signature") is not None
+        assert len(captured["tx"]["signature"]) == 128
+
+    def test_node_failure_exits_with_error(self, isolated_paths, monkeypatch):
+        import httpx
+
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(cli_module, "get_balance", lambda *a, **kw: 1000)
+        monkeypatch.setattr(
+            cli_module,
+            "submit_transaction",
+            lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("refused")),
+        )
+        _create_and_select_wallet()
+        result = runner.invoke(app, ["transfer", self.RECIPIENT, "10"])
+        assert result.exit_code != 0
+
+
+# ==== tx ====
+
+
+class TestTxCmd:
+
+    TX_ID = "a" * 64
+
+    def test_shows_transaction_details(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(
+            cli_module,
+            "get_transaction",
+            lambda *a, **kw: {
+                "id": self.TX_ID,
+                "tx_type": "Transfer",
+                "from": "b" * 64,
+                "to": "c" * 64,
+                "status": "confirmed",
+                "block_index": 5,
+                "data": {"amount": 10, "memo": ""},
+            },
+        )
+        result = runner.invoke(app, ["tx", self.TX_ID])
+        assert result.exit_code == 0
+        assert "confirmed" in result.output
+        assert "Transfer" in result.output
+
+    def test_shows_block_index(self, isolated_paths, monkeypatch):
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(
+            cli_module,
+            "get_transaction",
+            lambda *a, **kw: {
+                "id": self.TX_ID,
+                "tx_type": "Transfer",
+                "from": "b" * 64,
+                "to": "c" * 64,
+                "status": "confirmed",
+                "block_index": 7,
+                "data": {},
+            },
+        )
+        result = runner.invoke(app, ["tx", self.TX_ID])
+        assert "#7" in result.output
+
+    def test_not_found_exits_with_error(self, isolated_paths, monkeypatch):
+        import httpx
+
+        import blockkick.cli as cli_module
+
+        def raise_404(*a, **kw):
+            resp = httpx.Response(404)
+            raise httpx.HTTPStatusError("not found", request=None, response=resp)
+
+        monkeypatch.setattr(cli_module, "get_transaction", raise_404)
+        result = runner.invoke(app, ["tx", self.TX_ID])
+        assert result.exit_code != 0
+        assert "not found" in result.output.lower()
+
+    def test_network_error_exits_with_error(self, isolated_paths, monkeypatch):
+        import httpx
+
+        import blockkick.cli as cli_module
+
+        monkeypatch.setattr(
+            cli_module,
+            "get_transaction",
+            lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("refused")),
+        )
+        result = runner.invoke(app, ["tx", self.TX_ID])
+        assert result.exit_code != 0
+
+
+# ==== logout ====
+
+
+class TestLogout:
+
+    def test_clears_api_tokens(self, isolated_paths, monkeypatch):
+        import blockkick.wallet.keystore as ks
+
+        ks.save_api_tokens("access_tok", "refresh_tok")
+        result = runner.invoke(app, ["logout"])
+        assert result.exit_code == 0
+        assert not ks.API_AUTH_FILE.exists()
+
+    def test_shows_logged_out_message(self, isolated_paths, monkeypatch):
+        import blockkick.wallet.keystore as ks
+
+        ks.save_api_tokens("access_tok", "refresh_tok")
+        result = runner.invoke(app, ["logout"])
+        assert "Logged out" in result.output
+
+    def test_no_op_when_not_logged_in(self, isolated_paths):
+        result = runner.invoke(app, ["logout"])
+        assert result.exit_code == 0
+        assert "Not logged in" in result.output
+
+    def test_does_not_clear_session(self, isolated_paths, monkeypatch):
+        import blockkick.wallet.keystore as ks
+
+        _create_and_select_wallet()
+        ks.save_api_tokens("access_tok", "refresh_tok")
+        runner.invoke(app, ["logout"])
+        assert ks.SESSION_FILE.exists()

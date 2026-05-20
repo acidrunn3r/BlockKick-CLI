@@ -160,6 +160,28 @@ def submit_transaction(node_url: str, tx: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def get_transaction(node_url: str, tx_id: str) -> dict[str, Any]:
+    """Fetch a transaction by ID from the node.
+
+    Args:
+        node_url: Base URL of the BlockKick node.
+        tx_id: Hex-encoded SHA-256 transaction ID (64 chars).
+
+    Returns:
+        dict: Transaction details including status, tx_type, from, to, data.
+
+    Raises:
+        httpx.HTTPError: On network or HTTP errors.
+    """
+    response = httpx.get(
+        f"{node_url.rstrip('/')}/api/v1/transactions/{tx_id}",
+        timeout=10,
+    )
+    response.raise_for_status()
+    result: dict[str, Any] = response.json()
+    return result
+
+
 def get_profile(api_url: str, access_token: str) -> dict[str, Any]:
     """Fetch the authenticated user's profile.
 

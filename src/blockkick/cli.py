@@ -16,6 +16,7 @@ from .api.client import (
     auth_login,
     get_balance,
     get_profile,
+    get_transaction,
     list_projects,
     request_challenge,
     submit_transaction,
@@ -25,11 +26,13 @@ from .blockchain.mining import fetch_candidate, mine, submit_block
 from .blockchain.transactions import (
     build_create_project_tx,
     build_fund_project_tx,
+    build_transfer_tx,
     get_signing_data,
 )
 from .blockchain.tx import sign_transaction
 from .wallet.keystore import (
     KEYSTORE_DIR,
+    clear_api_tokens,
     clear_session,
     create_keystore,
     decrypt_keystore,
@@ -399,12 +402,19 @@ def mine_cmd(
         "-n",
         help="Node URL (e.g. http://localhost:8080). Defaults to saved config.",
     ),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        "-w",
+        help="Mine continuously until Ctrl+C.",
+    ),
 ) -> None:
     """
     Mine a block on the BlockKick blockchain.
 
     Uses the currently selected wallet as the reward recipient.
     Runs proof-of-work locally and submits the block to the node.
+    Pass --watch to mine continuously until Ctrl+C.
     """
     import json as _json
 
@@ -431,53 +441,72 @@ def mine_cmd(
     console.print(f"[bold]Mining with wallet:[/bold] {wallet_file}")
     console.print(f"[bold]Node:[/bold] {node_url}")
     console.print(f"[bold]Public key:[/bold] {public_key[:16]}...")
+    if watch:
+        console.print("[dim]Watch mode — press Ctrl+C to stop.[/dim]")
 
-    # Fetch candidate
-    try:
-        console.print("\n[dim]Fetching block candidate...[/dim]")
-        candidate = fetch_candidate(node_url, public_key)
-    except Exception as e:
-        console.print(f"[red]Failed to reach node:[/red] {e}")
-        raise typer.Exit(1) from None
+    blocks_mined = 0
+    while True:
+        # Fetch candidate
+        try:
+            console.print("\n[dim]Fetching block candidate...[/dim]")
+            candidate = fetch_candidate(node_url, public_key)
+        except KeyboardInterrupt:
+            console.print("\n[red]Mining cancelled.[/red]")
+            raise typer.Exit(0) from None
+        except Exception as e:
+            console.print(f"[red]Failed to reach node:[/red] {e}")
+            raise typer.Exit(1) from None
 
-    difficulty = candidate["difficulty"]
-    reward = candidate["reward"]
-    block_index = candidate["block_template"]["index"]
+        difficulty = candidate["difficulty"]
+        reward = candidate["reward"]
+        block_index = candidate["block_template"]["index"]
 
-    console.print(
-        f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins"
-    )
-    console.print(
-        f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n"
-    )
+        console.print(
+            f"Block [bold]#{block_index}[/bold] | Difficulty: [bold]{difficulty}[/bold] | Reward: [bold]{reward}[/bold] coins"
+        )
+        console.print(
+            f"\n[yellow]Mining...[/yellow] (looking for {difficulty} leading zeros)\n"
+        )
 
-    # Run PoW
-    try:
-        with console.status("[yellow]Hashing...[/yellow]", spinner="dots"):
-            nonce, block_hash, elapsed = mine(candidate)
-    except KeyboardInterrupt:
-        console.print("\n[red]Mining cancelled.[/red]")
-        raise typer.Exit(0) from None
+        # Run PoW
+        try:
+            with console.status("[yellow]Hashing...[/yellow]", spinner="dots"):
+                nonce, block_hash, elapsed = mine(candidate)
+        except KeyboardInterrupt:
+            console.print("\n[red]Mining cancelled.[/red]")
+            raise typer.Exit(0) from None
 
-    console.print("[green]Block found![/green]")
-    console.print(f"Nonce:   [bold]{nonce}[/bold]")
-    console.print(f"Hash:    [bold]{block_hash}[/bold]")
-    console.print(f"Time:    [bold]{elapsed:.2f}s[/bold]")
+        console.print("[green]Block found![/green]")
+        console.print(f"Nonce:   [bold]{nonce}[/bold]")
+        console.print(f"Hash:    [bold]{block_hash}[/bold]")
+        console.print(f"Time:    [bold]{elapsed:.2f}s[/bold]")
 
-    # Submit
-    try:
-        console.print("\n[dim]Submitting block...[/dim]")
-        result = submit_block(node_url, candidate, nonce)
-    except Exception as e:
-        console.print(f"[red]Submission failed:[/red] {e}")
-        raise typer.Exit(1) from None
+        # Submit
+        try:
+            console.print("\n[dim]Submitting block...[/dim]")
+            result = submit_block(node_url, candidate, nonce)
+        except KeyboardInterrupt:
+            console.print("\n[red]Mining cancelled.[/red]")
+            raise typer.Exit(0) from None
+        except Exception as e:
+            console.print(f"[red]Submission failed:[/red] {e}")
+            raise typer.Exit(1) from None
 
-    update_last_action(wallet_file)
+        update_last_action(wallet_file)
+        blocks_mined += 1
 
-    console.print("\n[green bold]Block accepted![/green bold]")
-    console.print(
-        f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}..."
-    )
+        console.print("\n[green bold]Block accepted![/green bold]")
+        console.print(
+            f"Reward: [bold]{result.get('reward', reward)}[/bold] coins → {public_key[:16]}..."
+        )
+
+        if not watch:
+            break
+
+        console.print(
+            f"\n[dim]Total mined this session: {blocks_mined}. Starting next block...[/dim]"
+        )
+        console.rule(style="dim")
 
 
 def _resolve_private_key(password: str | None) -> tuple[str, bytes, str]:
@@ -927,6 +956,144 @@ def projects_cmd(
         table.add_row(p["project_id"], p["name"], goal, raised, p["status"])
 
     console.print(table)
+
+
+# ==== TRANSFER COMMAND ====
+
+
+@app.command("transfer")
+def transfer_cmd(
+    address: str = typer.Argument(..., help="Recipient wallet address (64-char hex)."),
+    amount: int = typer.Argument(..., help="Amount of coins to send (≥ 1)."),
+    memo: str = typer.Option(
+        "", "--memo", "-m", help="Optional memo attached to the transfer."
+    ),
+    node: str = typer.Option(
+        None, "--node", "-n", help="Node URL. Defaults to saved config."
+    ),
+    password: str = typer.Option(
+        None,
+        "--password",
+        "-p",
+        hide_input=True,
+        help="Wallet password (if no active session).",
+    ),
+) -> None:
+    """
+    Send coins from your wallet to another address.
+
+    Builds and signs a Transfer transaction then broadcasts it to the node.
+    Use 'blockkick tx <tx_id>' to check whether it confirmed.
+    """
+    if amount < 1:
+        console.print("[red]Amount must be at least 1 coin.[/red]")
+        raise typer.Exit(1)
+
+    wallet_file, private_key_bytes, public_key = _resolve_private_key(password)
+    node_url = node or get_node_url()
+
+    try:
+        balance = get_balance(node_url, public_key)
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    if balance < amount:
+        console.print(
+            f"[red]Insufficient balance.[/red] "
+            f"You have [bold]{balance} coins[/bold] but the transfer requires [bold]{amount} coins[/bold]."
+        )
+        raise typer.Exit(1)
+
+    tx = build_transfer_tx(public_key, address, amount, memo)
+    signing_data = get_signing_data(tx)
+    signature = sign_transaction(signing_data, private_key_bytes)
+    tx["signature"] = signature
+
+    try:
+        console.print("\n[dim]Submitting transaction...[/dim]")
+        result = submit_transaction(node_url, tx)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Node rejected transaction:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    update_last_action(wallet_file)
+
+    status = result.get("status", "unknown")
+
+    console.print("\n[green bold]Transfer sent![/green bold]")
+    console.print(f"To:        [bold]{address[:16]}...[/bold]")
+    console.print(f"Amount:    [bold]{amount} coins[/bold]")
+    console.print(f"TX status: [bold]{status}[/bold]")
+    console.print(f"[dim]TX ID: {tx['id']}[/dim]")
+
+
+# ==== TX COMMAND ====
+
+
+@app.command("tx")
+def tx_cmd(
+    tx_id: str = typer.Argument(..., help="Transaction ID (64-char hex)."),
+    node: str = typer.Option(
+        None, "--node", "-n", help="Node URL. Defaults to saved config."
+    ),
+) -> None:
+    """
+    Look up a transaction by ID and show its status and details.
+
+    Useful for checking whether a transaction (transfer, donate, project
+    create) has been confirmed into a block after submission.
+    """
+    node_url = node or get_node_url()
+
+    try:
+        data = get_transaction(node_url, tx_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Transaction not found:[/red] {tx_id}")
+        else:
+            console.print(f"[red]Node error:[/red] {e.response.text}")
+        raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Failed to reach node:[/red] {e}")
+        raise typer.Exit(1) from None
+
+    console.print(f"TX ID:     [bold]{data.get('id', tx_id)}[/bold]")
+    console.print(f"Type:      [bold]{data.get('tx_type', '—')}[/bold]")
+    console.print(f"From:      [bold]{data.get('from', '—')}[/bold]")
+    if data.get("to"):
+        console.print(f"To:        [bold]{data['to']}[/bold]")
+    console.print(f"Status:    [bold]{data.get('status', '—')}[/bold]")
+    if data.get("block_index") is not None:
+        console.print(f"Block:     [bold]#{data['block_index']}[/bold]")
+    tx_data = data.get("data", {})
+    if tx_data:
+        console.print(f"Data:      [bold]{tx_data}[/bold]")
+
+
+# ==== LOGOUT COMMAND ====
+
+
+@app.command("logout")
+def logout_cmd() -> None:
+    """
+    Clear stored API tokens (log out of the BlockKick API).
+
+    Does not deselect your wallet or clear your session key — only removes
+    the JWT tokens saved by 'blockkick login'.
+    """
+    token = get_api_access_token()
+
+    if not token:
+        console.print("Not logged in.")
+        return
+
+    clear_api_tokens()
+    console.print("[green]Logged out.[/green]")
+    console.print("[dim]Run: blockkick login to authenticate again.[/dim]")
 
 
 if __name__ == "__main__":
