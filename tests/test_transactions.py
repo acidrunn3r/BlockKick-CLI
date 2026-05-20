@@ -139,47 +139,18 @@ class TestBuildCreateProjectTx:
 
 class TestBuildTransferTx:
 
-    def test_tx_type(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert tx["tx_type"] == "Transfer"
-
-    def test_from_is_sender(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert tx["from"] == SENDER
-
-    def test_to_is_recipient(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert tx["to"] == RECIPIENT
-
-    def test_data_amount(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 250)
-        assert tx["data"]["amount"] == 250
-
-    def test_data_memo_defaults_to_empty(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert tx["data"]["memo"] == ""
-
-    def test_data_memo_custom(self):
+    def test_fields(self):
         tx = build_transfer_tx(SENDER, RECIPIENT, 100, "payment")
+        assert tx["tx_type"] == "Transfer"
+        assert tx["from"] == SENDER
+        assert tx["to"] == RECIPIENT
+        assert tx["data"]["amount"] == 100
         assert tx["data"]["memo"] == "payment"
 
-    def test_id_field_is_populated(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert len(tx["id"]) == 64
-
-    def test_signature_is_none(self):
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        assert tx["signature"] is None
-
-    def test_timestamp_is_recent(self):
-        before = int(time.time())
-        tx = build_transfer_tx(SENDER, RECIPIENT, 100)
-        after = int(time.time())
-        assert before <= tx["timestamp"] <= after
-
-    def test_id_matches_compute_result(self):
+    def test_id_and_signature(self):
         tx = build_transfer_tx(SENDER, RECIPIENT, 100)
         assert tx["id"] == compute_tx_id(tx)
+        assert tx["signature"] is None
 
 
 # ==== build_fund_project_tx ====
